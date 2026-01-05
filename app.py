@@ -25,13 +25,23 @@ csv_data = """MES,CANTIDAD DE TRABAJADORES,ACTOS INSEGUROS,CONDICIONES INSEGURAS
 """
 
 @st.cache_data
+# ...
 def load_data():
-    df = pd.read_csv(StringIO(csv_data))
+    # PEGA AQUÍ EL NUEVO ENLACE QUE ACABAS DE COPIAR (EL DE LAS RESPUESTAS DEL FORMULARIO)
+    url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSHnEKxzb-M3T0PjzyA1zPv_h-awqQ0og6imzQ5uHJG8wk85-WBBgtoCWC9FnusngmDw72kL88tduR3/pub?gid=1349054762&single=true&output=csv"
+    
+    df = pd.read_csv(url)
+    
+    # PEQUEÑO TRUCO: Google Forms agrega una columna "Marca temporal" o "Timestamp" al inicio.
+    # Vamos a ignorarla para que no rompa tu app.
+    if 'Marca temporal' in df.columns:
+        df = df.drop(columns=['Marca temporal'])
+    
+    # Asegúrate que la columna MES sea fecha
     df['MES'] = pd.to_datetime(df['MES'])
-    # Calcular cumplimiento %
-    df['% Cumplimiento Insp'] = (df['INSPECCIONES EJECUTADAS'] / df['INSPECCIONES PROGRAMADAS']).fillna(0) * 100
-    df['% Cumplimiento Cap'] = (df['CAPACITACIONES EJECUTUDAS'] / df['CAPACITACIONES PROGRAMADAS']).fillna(0) * 100
+    
     return df
+# ...
 
 df = load_data()
 
