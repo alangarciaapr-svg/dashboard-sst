@@ -11,18 +11,18 @@ st.set_page_config(page_title="Dashboard SST", layout="wide", page_icon="⛑️"
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3050/3050523.png", width=100)
 st.sidebar.title("Configuración")
 
-# 1. Botón para subir archivo (Lo nuevo)
+# 1. Botón para subir archivo
 st.sidebar.header("📂 Actualizar Datos")
 uploaded_file = st.sidebar.file_uploader("Arrastra tu Excel o CSV aquí", type=["csv", "xlsx"])
 
 st.sidebar.markdown("---")
 
 # --- FUNCIÓN DE CARGA DE DATOS ---
-@st.cache_data(ttl=60) # Actualiza caché cada 60 segundos si usa la nube
+@st.cache_data(ttl=60)
 def load_data(file_uploaded):
     df = pd.DataFrame()
     
-    # CASO 1: El usuario subió un archivo
+    # CASO A: Usuario sube un archivo
     if file_uploaded is not None:
         try:
             if file_uploaded.name.endswith('.csv'):
@@ -34,28 +34,46 @@ def load_data(file_uploaded):
             st.error(f"Error leyendo el archivo subido: {e}")
             return pd.DataFrame()
             
-    # CASO 2: No hay archivo, intentar cargar desde Google Sheets (Nube)
+    # CASO B: Cargar desde la Nube (Google Sheets) si no hay archivo
     else:
-        # Tu URL de Google Sheets
         url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSHnEKxzb-M3T0PjzyA1zPv_h-awqQ0og6imzQ5uHJG8wk85-WBBgtoCWC9FnusngmDw72kL88tduR3/pub?gid=1349054762&single=true&output=csv"
         try:
             df = pd.read_csv(url)
-            # st.toast("☁️ Usando datos de la nube (Google Sheets)", icon="☁️") # Opcional: avisar
         except Exception as e:
             st.warning("⚠️ No se pudo conectar a la nube y no has subido archivo.")
             return pd.DataFrame()
 
-    # --- LIMPIEZA Y FORMATO ---
+    # --- LIMPIEZA Y CORRECCIÓN DE NOMBRES (SOLUCIÓN AL ERROR) ---
     if not df.empty:
-        # Eliminar timestamp de Google Forms si existe
-        if 'Marca temporal' in df.columns:
-            df = df.drop(columns=['Marca temporal'])
+        # 1. Quitar espacios extra en los nombres de las columnas
+        df.columns = df.columns.str.strip()
         
-        # Convertir columna MES a fecha
+        # 2. Diccionario de corrección: Mapea como debería llamarse vs como podría venir
+        # Esto soluciona el KeyError de tildes o mayúsculas
+        correcciones = {
+            'Dias perdidos': 'Días perdidos',
+            'dias perdidos': 'Días perdidos',
+            'Días Perdidos': 'Días perdidos',
+            'DIAS PERDIDOS': 'Días perdidos',
+            'Accidentes': 'ACCIDENTES',
+            'Actos Inseguros': 'ACTOS INSEGUROS',
+            'Condiciones Inseguras': 'CONDICIONES INSEGURAS',
+            'Mes': 'MES',
+            'Marca temporal': 'Timestamp'
+        }
+        df = df.rename(columns=correcciones)
+
+        # 3. Eliminar columnas basura de Google Forms
+        columnas_a_borrar = ['Timestamp', 'Marca temporal']
+        for col in columnas_a_borrar:
+            if col in df.columns:
+                df = df.drop(columns=[col])
+        
+        # 4. Convertir MES a fecha
         if 'MES' in df.columns:
             df['MES'] = pd.to_datetime(df['MES'])
         else:
-            st.error("Error: El archivo no tiene la columna 'MES'.")
+            st.error(f"⚠️ El archivo no tiene la columna 'MES'. Columnas detectadas: {list(df.columns)}")
             return pd.DataFrame()
             
     return df
@@ -63,41 +81,43 @@ def load_data(file_uploaded):
 # Ejecutar carga
 df = load_data(uploaded_file)
 
-# Detener si no hay datos
+# Si no hay datos, detener la app
 if df.empty:
-    st.info("👋 ¡Hola! Para empezar, sube tu archivo Excel/CSV en el menú de la izquierda o verifica la conexión a internet.")
+    st.info("👋 Sube tu archivo Excel/CSV para comenzar.")
     st.stop()
 
 # --- TÍTULO PRINCIPAL ---
 st.title("🛡️ App de Gestión SST - Tablero de Control")
 st.markdown(f"**Última actualización:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
-# --- FILTROS SIDEBAR ---
+# --- FILTROS ---
 st.sidebar.header("Filtrar Datos")
-if not df.empty:
-    years = sorted(df['MES'].dt.year.unique(), reverse=True)
-    year_sel = st.sidebar.selectbox("Seleccionar Año", years, index=0)
-    
-    # Filtrar el DataFrame
-    df_filtered = df[df['MES'].dt.year == year_sel]
-else:
-    df_filtered = df
+years = sorted(df['MES'].dt.year.unique(), reverse=True)
+year_sel = st.sidebar.selectbox("Seleccionar Año", years, index=0)
+
+df_filtered = df[df['MES'].dt.year == year_sel]
+
+# --- HELPER PARA SUMAS SEGURAS ---
+# Esta función evita que la app se caiga si falta una columna
+def get_sum(col_name):
+    if col_name in df_filtered.columns:
+        return df_filtered[col_name].sum()
+    return 0
 
 # --- CÁLCULO DE KPIs ---
-total_acc = df_filtered['ACCIDENTES'].sum()
-dias_perdidos = df_filtered['Días perdidos'].sum()
-actos_ins = df_filtered['ACTOS INSEGUROS'].sum()
-cond_ins = df_filtered['CONDICIONES INSEGURAS'].sum()
+total_acc = get_sum('ACCIDENTES')
+dias_perdidos = get_sum('Días perdidos') # Ahora funcionará aunque venga sin tilde
+actos_ins = get_sum('ACTOS INSEGUROS')
+cond_ins = get_sum('CONDICIONES INSEGURAS')
 
 # Calcular días sin accidentes
-try:
-    if 'Fecha del ultimo accidente' in df_filtered.columns and not df_filtered.empty:
+dias_sin_acc = "N/A"
+if 'Fecha del ultimo accidente' in df_filtered.columns:
+    try:
         last_acc_date = pd.to_datetime(df_filtered['Fecha del ultimo accidente'].iloc[-1])
         dias_sin_acc = (datetime.now() - last_acc_date).days
-    else:
-        dias_sin_acc = "N/A"
-except:
-    dias_sin_acc = "N/A"
+    except:
+        pass
 
 # --- VISUALIZACIÓN KPIs (Top Row) ---
 col1, col2, col3, col4 = st.columns(4)
@@ -114,8 +134,9 @@ st.markdown("---")
 c1, c2 = st.columns([2, 1])
 
 with c1:
-    st.subheader("📈 Evolución de Índices (Frecuencia y Severidad)")
-    if not df_filtered.empty:
+    st.subheader("📈 Evolución de Índices")
+    # Verificamos si existen las columnas antes de graficar
+    if 'Indice de Frecuencia' in df_filtered.columns and 'Indice de severidad' in df_filtered.columns:
         fig_line = go.Figure()
         fig_line.add_trace(go.Scatter(x=df_filtered['MES'], y=df_filtered['Indice de Frecuencia'], 
                         mode='lines+markers', name='Frecuencia', line=dict(color='orange')))
@@ -123,44 +144,40 @@ with c1:
                         mode='lines+markers', name='Severidad', line=dict(color='red')))
         fig_line.update_layout(height=350, margin=dict(l=20, r=20, t=30, b=20))
         st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.info("No se encontraron columnas de Índices para graficar.")
 
 with c2:
     st.subheader("🔍 Actos vs Condiciones")
-    if not df_filtered.empty:
-        labels = ['Actos Inseguros', 'Condiciones Inseguras']
-        values = [actos_ins, cond_ins]
+    labels = ['Actos Inseguros', 'Condiciones Inseguras']
+    values = [actos_ins, cond_ins]
+    if sum(values) > 0:
         fig_pie = px.pie(names=labels, values=values, hole=0.4, color_discrete_sequence=['#FFA726', '#EF5350'])
         fig_pie.update_layout(height=350, margin=dict(l=20, r=20, t=30, b=20))
         st.plotly_chart(fig_pie, use_container_width=True)
+    else:
+        st.write("Sin datos registrados.")
 
 # Fila 2: Barras de Gestión
-st.subheader("📊 Gestión Preventiva (Planificado vs Ejecutado)")
+st.subheader("📊 Gestión Preventiva")
 c3, c4 = st.columns(2)
 
-with c3:
-    if not df_filtered.empty:
-        fig_insp = go.Figure(data=[
-            go.Bar(name='Programadas', x=df_filtered['MES'], y=df_filtered['INSPECCIONES PROGRAMADAS'], marker_color='#E0E0E0'),
-            go.Bar(name='Ejecutadas', x=df_filtered['MES'], y=df_filtered['INSPECCIONES EJECUTADAS'], marker_color='#66BB6A')
+# Función para graficar barras de forma segura
+def plot_bar_chart(title, col_prog, col_ejec, color_bar):
+    if col_prog in df_filtered.columns and col_ejec in df_filtered.columns:
+        fig = go.Figure(data=[
+            go.Bar(name='Programadas', x=df_filtered['MES'], y=df_filtered[col_prog], marker_color='#E0E0E0'),
+            go.Bar(name='Ejecutadas', x=df_filtered['MES'], y=df_filtered[col_ejec], marker_color=color_bar)
         ])
-        fig_insp.update_layout(title="Inspecciones", barmode='group', height=300)
-        st.plotly_chart(fig_insp, use_container_width=True)
+        fig.update_layout(title=title, barmode='group', height=300)
+        st.plotly_chart(fig, use_container_width=True)
+
+with c3:
+    plot_bar_chart("Inspecciones", 'INSPECCIONES PROGRAMADAS', 'INSPECCIONES EJECUTADAS', '#66BB6A')
 
 with c4:
-    if not df_filtered.empty:
-        fig_cap = go.Figure(data=[
-            go.Bar(name='Programadas', x=df_filtered['MES'], y=df_filtered['CAPACITACIONES PROGRAMADAS'], marker_color='#E0E0E0'),
-            go.Bar(name='Ejecutadas', x=df_filtered['MES'], y=df_filtered['CAPACITACIONES EJECUTUDAS'], marker_color='#42A5F5')
-        ])
-        fig_cap.update_layout(title="Capacitaciones", barmode='group', height=300)
-        st.plotly_chart(fig_cap, use_container_width=True)
+    plot_bar_chart("Capacitaciones", 'CAPACITACIONES PROGRAMADAS', 'CAPACITACIONES EJECUTUDAS', '#42A5F5')
 
 # --- TABLA DE DATOS ---
 with st.expander("📂 Ver Base de Datos Completa"):
-    if not df_filtered.empty:
-        # Formateo condicional para que se vea bonito
-        st.dataframe(df_filtered.style.format({
-            'Indice de Frecuencia': '{:.2f}',
-            'Indice de severidad': '{:.2f}',
-            # Agregar aquí más columnas si quieres formato específico
-        }))
+    st.dataframe(df_filtered)
