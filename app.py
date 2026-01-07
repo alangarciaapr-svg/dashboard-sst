@@ -12,52 +12,61 @@ st.set_page_config(page_title="SGSST - Maderas Galvez", layout="wide", page_icon
 CSV_FILE = "base_datos_galvez_auto.csv"
 
 def get_structure():
-    # Estructura base para empezar
     return pd.DataFrame({
         'Año': [2026], 
         'Mes': ['Enero'],
-        # DATOS DE ENTRADA (LO QUE TÚ LLENAS)
-        'Masa Laboral': [100], 
-        'Horas Extras': [0],
-        'Horas Ausentismo': [0],
-        'Accidentes CTP': [0], 
-        'Días Perdidos': [0], 
-        'Días Cargo': [0],
+        # DATOS DE ENTRADA
+        'Masa Laboral': [100.0], 
+        'Horas Extras': [0.0],
+        'Horas Ausentismo': [0.0],
+        'Accidentes CTP': [0.0], 
+        'Días Perdidos': [0.0], 
+        'Días Cargo': [0.0],
         # GESTIÓN
-        'Insp. Programadas': [10], 'Insp. Ejecutadas': [8],
-        'Cap. Programadas': [5], 'Cap. Ejecutadas': [5],
-        'Medidas Abiertas': [5], 'Medidas Cerradas': [4],
-        'Expuestos Silice/Ruido': [10], 'Vig. Salud Vigente': [10],
-        # CALCULADOS (SE LLENAN SOLOS)
-        'HHT': [18000],
-        'Tasa Acc.': [0.0],
-        'Tasa Sin.': [0.0],
-        'Indice Frec.': [0.0],
-        'Indice Grav.': [0.0]
+        'Insp. Programadas': [10.0], 'Insp. Ejecutadas': [8.0],
+        'Cap. Programadas': [5.0], 'Cap. Ejecutadas': [5.0],
+        'Medidas Abiertas': [5.0], 'Medidas Cerradas': [4.0],
+        'Expuestos Silice/Ruido': [10.0], 'Vig. Salud Vigente': [10.0],
+        # CALCULADOS
+        'HHT': [18000.0],
+        'Tasa Acc.': [0.0], 'Tasa Sin.': [0.0],
+        'Indice Frec.': [0.0], 'Indice Grav.': [0.0]
     })
 
+def limpiar_numeros(df):
+    """Convierte texto a números para evitar errores de cálculo"""
+    cols_numericas = [
+        'Masa Laboral', 'Horas Extras', 'Horas Ausentismo', 'Accidentes CTP', 
+        'Días Perdidos', 'Días Cargo', 'Insp. Programadas', 'Insp. Ejecutadas',
+        'Cap. Programadas', 'Cap. Ejecutadas', 'Medidas Abiertas', 'Medidas Cerradas',
+        'Expuestos Silice/Ruido', 'Vig. Salud Vigente', 'HHT', 'Tasa Acc.', 
+        'Tasa Sin.', 'Indice Frec.', 'Indice Grav.'
+    ]
+    
+    for col in cols_numericas:
+        if col in df.columns:
+            # Convierte a número, si hay error pone 0
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    return df
+
 def calcular_indices(df):
-    """
-    FÓRMULAS AUTOMÁTICAS (Norma Chilena / Mutualidades)
-    """
-    # 1. HHT (Estimación Mutualidad estándar: Base 180 hrs/mes + Extras - Ausencias)
-    # Se puede ajustar la base a 44 hrs (aprox 176) si se desea. Usamos 180 por defecto histórico.
+    # Aseguramos que sean números antes de calcular
+    df = limpiar_numeros(df)
+    
+    # 1. HHT
     df['HHT'] = (df['Masa Laboral'] * 180) + df['Horas Extras'] - df['Horas Ausentismo']
     
     # Evitar división por cero
+    # Usamos .apply para asegurar que operamos fila por fila de forma segura
     df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 1)
-    df['Masa Laboral'] = df['Masa Laboral'].apply(lambda x: x if x > 0 else 1)
+    masa_segura = df['Masa Laboral'].apply(lambda x: x if x > 0 else 1)
 
-    # 2. Tasa de Accidentabilidad (DS 67) -> (Accidentes / Masa) * 100
-    df['Tasa Acc.'] = (df['Accidentes CTP'] / df['Masa Laboral']) * 100
+    # 2. Tasas
+    df['Tasa Acc.'] = (df['Accidentes CTP'] / masa_segura) * 100
+    df['Tasa Sin.'] = (df['Días Perdidos'] / masa_segura) * 100
 
-    # 3. Tasa de Siniestralidad (DS 67) -> (Días Perdidos / Masa) * 100
-    df['Tasa Sin.'] = (df['Días Perdidos'] / df['Masa Laboral']) * 100
-
-    # 4. Índice de Frecuencia (ANSI/NCh) -> (Accidentes * 1.000.000) / HHT
+    # 3. Índices
     df['Indice Frec.'] = (df['Accidentes CTP'] * 1000000) / df['HHT']
-
-    # 5. Índice de Gravedad (ANSI/NCh) -> ((Días Perdidos + Días Cargo) * 1.000.000) / HHT
     df['Indice Grav.'] = ((df['Días Perdidos'] + df['Días Cargo']) * 1000000) / df['HHT']
     
     return df
@@ -67,15 +76,14 @@ def load_data():
         try:
             df = pd.read_csv(CSV_FILE)
             ref = get_structure()
-            # Asegurar que existan todas las columnas
+            # Asegurar columnas faltantes
             for col in ref.columns:
                 if col not in df.columns: df[col] = 0
-            return calcular_indices(df) # Recalcular al cargar por si acaso
+            return calcular_indices(df)
         except: return get_structure()
     return get_structure()
 
 def save_data(df):
-    # Recalcular antes de guardar para asegurar integridad
     df_calc = calcular_indices(df)
     df_calc.to_csv(CSV_FILE, index=False)
     return df_calc
@@ -92,7 +100,7 @@ with st.sidebar:
         with open(logo_path, "wb") as f: f.write(uploaded_logo.getbuffer())
     
     st.markdown("---")
-    st.info("ℹ️ **Cálculo Automático HHT:**\n(Trabajadores * 180) + Extras - Ausencias")
+    st.info("ℹ️ **Cálculo Automático:**\nEl sistema corrige automáticamente textos a números.")
     
     if st.button("♻️ Reiniciar Datos"):
         save_data(get_structure())
@@ -153,11 +161,17 @@ class PDF_GALVEZ(FPDF):
         bar_x = x; bar_y = y + 6; bar_h = 5
         self.set_fill_color(230, 230, 230)
         self.rect(bar_x, bar_y, w_total, bar_h, 'F')
+        
+        # Color dinámico
         if percentage >= 90: self.set_fill_color(46, 125, 50)
         elif percentage >= 70: self.set_fill_color(255, 143, 0)
         else: self.set_fill_color(198, 40, 40)
+        
+        # Ancho seguro
         fill_w = (percentage / 100) * w_total
         if fill_w > w_total: fill_w = w_total
+        if fill_w < 0: fill_w = 0 # Protección extra
+        
         self.rect(bar_x, bar_y, fill_w, bar_h, 'F')
         self.set_xy(bar_x + w_total + 2, bar_y - 1)
         self.set_font('Arial', '', 9)
@@ -191,7 +205,7 @@ with tab_dash:
     if df_m.empty: st.stop()
     row = df_m.iloc[0]
 
-    # Tomar valores CALCULADOS del dataframe (ya no se calculan aquí)
+    # Tomar valores (Ahora seguros porque pasaron por limpiar_numeros)
     masa = row['Masa Laboral']
     hht = row['HHT']
     acc = row['Accidentes CTP']
@@ -199,8 +213,13 @@ with tab_dash:
     tasa_sin = row['Tasa Sin.']
     if_men = row['Indice Frec.']
     
-    # Gestión
-    def safe_div(a, b): return (a/b*100) if b > 0 else 0
+    # Función división segura
+    def safe_div(a, b): 
+        try:
+            val = (float(a)/float(b)*100)
+            return val if b > 0 else 0
+        except: return 0
+    
     p_insp = safe_div(row['Insp. Ejecutadas'], row['Insp. Programadas'])
     p_cap = safe_div(row['Cap. Ejecutadas'], row['Cap. Programadas'])
     if row['Medidas Abiertas'] == 0: p_medidas = 100
@@ -223,7 +242,8 @@ with tab_dash:
         fig.update_layout(height=120, margin=dict(t=0,b=0,l=0,r=0), 
                          annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=20, showarrow=False)])
         st.markdown(f"<div style='text-align:center; font-size:14px;'>{title}</div>", unsafe_allow_html=True)
-        st.plotly_chart(fig, use_container_width=True, key=title) # ID ÚNICO
+        # KEY UNIQUE FIX
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_{title}")
 
     with g1: donut(p_insp, "Inspecciones")
     with g2: donut(p_cap, "Capacitaciones")
@@ -279,15 +299,14 @@ with tab_dash:
 
 with tab_editor:
     st.subheader("📝 Editor Inteligente")
-    st.info("Ingresa solo los datos básicos. El sistema calcula HHT e Índices automáticamente.")
+    st.info("Ingresa los números. El sistema limpia formatos incorrectos automáticamente.")
     
     cfg = {
         "Mes": st.column_config.SelectboxColumn("Mes", options=m_order, required=True),
-        "Masa Laboral": st.column_config.NumberColumn("Trabajadores", min_value=1, help="Nº Trabajadores promedio"),
+        "Masa Laboral": st.column_config.NumberColumn("Trabajadores", min_value=1),
         "Horas Extras": st.column_config.NumberColumn("Horas Extras", min_value=0),
-        "Horas Ausentismo": st.column_config.NumberColumn("Ausentismo", min_value=0, help="Faltas, licencias, permisos"),
+        "Horas Ausentismo": st.column_config.NumberColumn("Ausentismo", min_value=0),
         
-        # Columnas Bloqueadas (Calculadas)
         "HHT": st.column_config.NumberColumn("HHT (Auto)", disabled=True),
         "Tasa Acc.": st.column_config.NumberColumn("Tasa Acc (Auto)", disabled=True, format="%.2f%%"),
         "Tasa Sin.": st.column_config.NumberColumn("Tasa Sin (Auto)", disabled=True, format="%.2f"),
@@ -298,10 +317,8 @@ with tab_editor:
         "Medidas Cerradas": st.column_config.NumberColumn("Cerrados"),
     }
     
-    # IMPORTANTE: st.data_editor devuelve el DF modificado
     edited = st.data_editor(st.session_state['df_main'], num_rows="dynamic", column_config=cfg, use_container_width=True)
     
-    # Detectar cambios y guardar (trigger recalculo)
     if not edited.equals(st.session_state['df_main']):
-        st.session_state['df_main'] = save_data(edited) # Save data retorna el DF con cálculos
+        st.session_state['df_main'] = save_data(edited)
         st.rerun()
