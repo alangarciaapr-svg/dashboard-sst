@@ -9,7 +9,7 @@ from fpdf import FPDF
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v4.csv"
+CSV_FILE = "base_datos_galvez_v5.csv"
 
 def get_structure():
     return pd.DataFrame({
@@ -22,20 +22,18 @@ def get_structure():
         'Cap. Programadas': [5.0], 'Cap. Ejecutadas': [5.0],
         'Medidas Abiertas': [5.0], 'Medidas Cerradas': [4.0],
         'Expuestos Silice/Ruido': [10.0], 'Vig. Salud Vigente': [10.0],
-        # CAMPO NUEVO: OBSERVACIONES
-        'Observaciones': ["Sin novedades relevantes en el periodo."],
+        # CAMPO OBSERVACIONES
+        'Observaciones': ["Sin novedades relevantes."],
         # CALCULADOS
         'HHT': [18000.0], 'Tasa Acc.': [0.0], 'Tasa Sin.': [0.0],
         'Indice Frec.': [0.0], 'Indice Grav.': [0.0]
     })
 
 def procesar_datos(df):
-    # Asegurar tipos numéricos (excepto texto)
     cols_num = df.columns.drop(['Año', 'Mes', 'Observaciones'])
     for col in cols_num:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    # Asegurar que exista la columna Observaciones si cargamos un archivo viejo
     if 'Observaciones' not in df.columns:
         df['Observaciones'] = ""
 
@@ -57,7 +55,6 @@ def load_data():
         try:
             df = pd.read_csv(CSV_FILE)
             ref = get_structure()
-            # Reparar columnas faltantes
             for col in ref.columns:
                 if col not in df.columns: 
                     if col == 'Observaciones': df[col] = ""
@@ -135,9 +132,8 @@ class PDF_SST(FPDF):
 df = st.session_state['df_main']
 tab_dash, tab_editor = st.tabs(["📊 DASHBOARD INTEGRAL", "📝 EDITOR Y OBSERVACIONES"])
 
-# PREPARACIÓN COMÚN DE DATOS
+# PREPARACIÓN COMÚN
 years = sorted(df['Año'].unique(), reverse=True)
-# Si no hay años (DF vacío), usar defaults
 curr_year = years[0] if len(years)>0 else 2026
 
 df_year = df[df['Año'] == curr_year].copy()
@@ -147,7 +143,6 @@ df_year = df_year.sort_values('Mes_Idx')
 months_avail = df_year['Mes'].tolist()
 
 with tab_dash:
-    # Encabezado
     c1, c2 = st.columns([1, 4])
     with c1:
         if os.path.exists(logo_path): st.image(logo_path, width=160)
@@ -155,14 +150,12 @@ with tab_dash:
         st.title("SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA")
         st.markdown("### SISTEMA DE GESTIÓN EN SST DS44")
 
-    # Filtros
     col_y, col_m = st.columns(2)
     sel_year = col_y.selectbox("Año Fiscal", years)
     sel_month = col_m.selectbox("Mes de Cierre", months_avail, index=len(months_avail)-1 if months_avail else 0)
     
-    # --- CÁLCULOS ---
+    # CÁLCULOS
     row_mes = df_year[df_year['Mes'] == sel_month].iloc[0]
-    
     idx_corte = m_order.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
     
@@ -176,7 +169,6 @@ with tab_dash:
     if_acum = (sum_acc * 1000000 / sum_hht) if sum_hht > 0 else 0
     ig_acum = ((sum_dias + df_acum['Días Cargo'].sum()) * 1000000 / sum_hht) if sum_hht > 0 else 0
     
-    # Gestión
     def safe_div(a, b): return (a/b*100) if b > 0 else 0
     p_insp = safe_div(row_mes['Insp. Ejecutadas'], row_mes['Insp. Programadas'])
     p_cap = safe_div(row_mes['Cap. Ejecutadas'], row_mes['Cap. Programadas'])
@@ -199,29 +191,27 @@ with tab_dash:
     a3.metric("I. Frec. Acumulado", f"{if_acum:.2f}")
     a4.metric("I. Grav. Acumulado", f"{ig_acum:.0f}")
 
-    # SUGERENCIA DE MEJORA: VISUALIZACIÓN DE TENDENCIA
+    # GRÁFICOS Y SEMÁFORO (CORREGIDO)
     st.markdown("---")
     c_graf1, c_graf2 = st.columns(2)
     with c_graf1:
-        st.markdown("#### 📊 Evolución Mensual Accidentabilidad")
+        st.markdown("#### 📊 Evolución Mensual")
         fig = go.Figure()
         fig.add_trace(go.Bar(x=df_year['Mes'], y=df_year['Accidentes CTP'], name='Nº Accidentes', marker_color='#90CAF9'))
         fig.add_trace(go.Scatter(x=df_year['Mes'], y=df_year['Tasa Acc.'], name='Tasa Accidentabilidad', yaxis='y2', line=dict(color='#B71C1C', width=3)))
         fig.update_layout(height=300, yaxis2=dict(overlaying='y', side='right', title='Tasa %'))
         st.plotly_chart(fig, use_container_width=True)
     
-    with c_grap2:
-         st.markdown("#### 🚦 Semáforo Anual")
-         # Lógica visual simple
-         color_status = "green" if ta_acum < 3 else "red"
+    with c_graf2: # <--- AQUÍ ESTABA EL ERROR (antes decía c_grap2)
+         st.markdown("#### 🚦 Semáforo Anual DS67")
+         color_status = "#4CAF50" if ta_acum < 3 else "#F44336" # Verde o Rojo
          st.markdown(f"""
-            <div style="background-color: white; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #ddd;">
-                <h3 style="margin:0; color: #555;">Estado Actual DS 67</h3>
-                <h1 style="font-size: 60px; color: {color_status}; margin: 10px 0;">{ta_acum:.2f}%</h1>
-                <p>Meta Anual: < 3.0%</p>
+            <div style="background-color: white; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #ddd; height: 300px; display: flex; flex-direction: column; justify-content: center;">
+                <h3 style="margin:0; color: #555;">Tasa Acumulada Actual</h3>
+                <h1 style="font-size: 70px; color: {color_status}; margin: 10px 0;">{ta_acum:.2f}%</h1>
+                <p style="font-size: 18px;">Meta Legal Anual: < 3.0%</p>
             </div>
          """, unsafe_allow_html=True)
-
 
     st.markdown("#### 📋 Gestión Depto SST (Mes Actual)")
     g1, g2, g3, g4 = st.columns(4)
@@ -236,18 +226,17 @@ with tab_dash:
     with g3: donut(p_medidas, "Cierre Hallazgos", "#FFA726")
     with g4: donut(p_salud, "Salud Ocupacional", "#AB47BC")
 
-    # --- PDF ---
+    # PDF
     st.markdown("---")
     if st.button("📄 Generar Reporte Completo PDF"):
         pdf = PDF_SST(orientation='P', format='A4')
         pdf.add_page()
         
-        # Título Reporte
         pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, f"PERIODO DE EVALUACIÓN: {sel_month.upper()} {sel_year}", 0, 1, 'L')
         pdf.ln(2)
         
-        # 1. TABLA COMPARATIVA
+        # 1. TABLA
         pdf.section_title("1. INDICADORES DE RESULTADO (COMPARATIVO)")
         
         pdf.set_fill_color(220, 220, 220)
@@ -268,20 +257,13 @@ with tab_dash:
         # 2. GESTIÓN
         pdf.section_title("2. GESTIÓN OPERATIVA SST (MES ACTUAL)")
         pdf.set_font('Arial', '', 10)
-        
-        data_gest = [
-            ("Cumplimiento Inspecciones", p_insp),
-            ("Cumplimiento Capacitaciones", p_cap),
-            ("Eficacia Cierre Hallazgos", p_medidas),
-            ("Cobertura Vigilancia Salud", p_salud)
-        ]
+        data_gest = [("Cumplimiento Inspecciones", p_insp), ("Cumplimiento Capacitaciones", p_cap),
+                     ("Eficacia Cierre Hallazgos", p_medidas), ("Cobertura Vigilancia Salud", p_salud)]
         
         for label, val in data_gest:
             pdf.cell(80, 8, label, 0)
-            x = pdf.get_x()
-            y = pdf.get_y()
-            pdf.set_fill_color(230, 230, 230)
-            pdf.rect(x, y+2, 80, 4, 'F')
+            x = pdf.get_x(); y = pdf.get_y()
+            pdf.set_fill_color(230, 230, 230); pdf.rect(x, y+2, 80, 4, 'F')
             if val >= 90: pdf.set_fill_color(76, 175, 80)
             elif val >= 70: pdf.set_fill_color(255, 152, 0)
             else: pdf.set_fill_color(244, 67, 54)
@@ -290,27 +272,16 @@ with tab_dash:
             pdf.set_x(x + 85)
             pdf.cell(20, 8, f"{val:.0f}%", 0, 1)
 
-        # 3. OBSERVACIONES (EL PUNTO 4 QUE PEDISTE)
+        # 3. OBSERVACIONES
         pdf.ln(10)
-        pdf.section_title("3. EVOLUCIÓN HISTÓRICA")
-        pdf.set_font('Arial', 'I', 8)
-        pdf.cell(0, 5, "Detalle mes a mes disponible en anexo digital.", 0, 1)
-        
-        pdf.ln(5)
-        pdf.section_title("4. OBSERVACIONES Y CONCLUSIONES DEL PERIODO")
-        
-        # Recuadro para el texto
+        pdf.section_title("3. OBSERVACIONES Y CONCLUSIONES DEL PERIODO")
         pdf.set_font('Arial', '', 10)
         pdf.set_draw_color(100, 100, 100)
-        
-        # Texto de observaciones (Extraído del DataFrame)
         obs_text = str(row_mes['Observaciones'])
-        if obs_text == "0" or obs_text == "nan" or obs_text == "": 
-            obs_text = "Sin observaciones registradas para este periodo."
-            
+        if obs_text == "0" or obs_text == "nan" or obs_text == "": obs_text = "Sin observaciones registradas."
         pdf.multi_cell(0, 6, obs_text, 1, 'L')
         
-        # Footer Firma
+        # Firma
         pdf.ln(20)
         pdf.line(110, pdf.get_y(), 190, pdf.get_y())
         pdf.set_xy(110, pdf.get_y()+2)
@@ -322,17 +293,11 @@ with tab_dash:
 
 with tab_editor:
     st.subheader("📝 Carga de Datos y Observaciones")
-    
-    # 1. Selector de Mes para Editar
     edit_month = st.selectbox("Seleccionar Mes para Editar:", months_avail, key="editor_selector")
-    
-    # Filtramos el DF para obtener solo esa fila y poder editarla
     row_idx = df.index[df['Mes'] == edit_month].tolist()[0]
     
-    # --- FORMULARIO DE EDICIÓN ---
     with st.form("edit_form"):
         col_e1, col_e2, col_e3 = st.columns(3)
-        
         with col_e1:
             st.markdown("##### 👷 Datos Laborales")
             val_masa = st.number_input("Masa Laboral", value=float(df.at[row_idx, 'Masa Laboral']))
@@ -356,14 +321,12 @@ with tab_editor:
             val_exp = st.number_input("Expuestos Silice/Ruido", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
             val_vig = st.number_input("Vigilancia Vigente", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
 
-        st.markdown("##### 📝 Observaciones del Mes (Punto 4 del PDF)")
-        # Recuperar texto existente
+        st.markdown("##### 📝 Observaciones (Punto 4 PDF)")
         curr_obs = df.at[row_idx, 'Observaciones']
         if pd.isna(curr_obs) or curr_obs == 0: curr_obs = ""
-        val_obs = st.text_area("Escriba aquí sus conclusiones:", value=str(curr_obs), height=100)
+        val_obs = st.text_area("Conclusiones:", value=str(curr_obs), height=100)
 
         if st.form_submit_button("💾 GUARDAR CAMBIOS"):
-            # Actualizar DF en memoria
             df.at[row_idx, 'Masa Laboral'] = val_masa
             df.at[row_idx, 'Horas Extras'] = val_extras
             df.at[row_idx, 'Horas Ausentismo'] = val_aus
@@ -380,7 +343,6 @@ with tab_editor:
             df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
             df.at[row_idx, 'Observaciones'] = val_obs
             
-            # Recalcular y Guardar
             st.session_state['df_main'] = save_data(df)
-            st.success("Datos actualizados correctamente.")
+            st.success("Guardado.")
             st.rerun()
