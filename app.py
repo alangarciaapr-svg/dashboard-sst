@@ -3,17 +3,19 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 import os
+import shutil
 from fpdf import FPDF
+from io import BytesIO
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
-# --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v9.csv"
+# --- 2. GESTIÓN DE DATOS Y ARCHIVOS ---
+CSV_FILE = "base_datos_galvez_v10.csv"
+LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
 def get_structure_for_year(year):
-    """Genera los 12 meses vacíos para un año específico"""
     data = []
     for m in MESES_ORDEN:
         data.append({
@@ -30,13 +32,14 @@ def get_structure_for_year(year):
     return pd.DataFrame(data)
 
 def inicializar_db_completa():
-    """Crea la base inicial con 2024, 2025 y 2026"""
+    # Iniciamos con un histórico decente
     df_24 = get_structure_for_year(2024)
     df_25 = get_structure_for_year(2025)
     df_26 = get_structure_for_year(2026)
     return pd.concat([df_24, df_25, df_26], ignore_index=True)
 
 def procesar_datos(df):
+    # Limpieza de tipos
     cols_num = df.columns.drop(['Año', 'Mes', 'Observaciones'])
     for col in cols_num:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -44,9 +47,11 @@ def procesar_datos(df):
     df['Año'] = df['Año'].astype(int)
     if 'Observaciones' not in df.columns: df['Observaciones'] = ""
 
-    # Cálculos
+    # CÁLCULOS AUTOMÁTICOS MUTUALIDADES
+    # HHT = (Masa * 180) + Extras - Ausentismo
     df['HHT'] = (df['Masa Laboral'] * 180) + df['Horas Extras'] - df['Horas Ausentismo']
-    df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 1)
+    df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 1) # Evitar div 0
+    
     masa = df['Masa Laboral'].apply(lambda x: x if x > 0 else 1)
     
     df['Tasa Acc.'] = (df['Accidentes CTP'] / masa) * 100
@@ -60,7 +65,7 @@ def load_data():
         try:
             df = pd.read_csv(CSV_FILE)
             if df.empty: return inicializar_db_completa()
-            # Asegurar columnas
+            # Reparación de estructura si faltan columnas nuevas
             ref = get_structure_for_year(2026)
             for col in ref.columns:
                 if col not in df.columns: 
@@ -72,67 +77,93 @@ def load_data():
 
 def save_data(df):
     df_calc = procesar_datos(df)
+    # Generar Backup automático antes de guardar (Seguridad)
+    if os.path.exists(CSV_FILE):
+        shutil.copy(CSV_FILE, f"{CSV_FILE}.bak")
     df_calc.to_csv(CSV_FILE, index=False)
     return df_calc
 
+# --- INTELIGENCIA DE NEGOCIOS ---
 def generar_insight_automatico(row_mes, ta_acum, metas):
     insights = []
+    # Semáforo Tasa
     if ta_acum > metas['meta_ta']:
-        insights.append(f"⚠️ <b>ALERTA:</b> Tasa Acumulada ({ta_acum:.2f}%) sobre la meta.")
+        insights.append(f"⚠️ <b>ALERTA:</b> La Tasa Acumulada ({ta_acum:.2f}%) supera la meta establecida ({metas['meta_ta']}%)")
     elif ta_acum > (metas['meta_ta'] * 0.8):
-        insights.append(f"🔸 <b>PRECAUCIÓN:</b> Tasa Acumulada al límite.")
+        insights.append(f"🔸 <b>PRECAUCIÓN:</b> La Tasa Acumulada está acercándose al límite.")
     else:
-        insights.append(f"✅ <b>EXCELENTE:</b> Accidentabilidad bajo control.")
+        insights.append(f"✅ <b>EXCELENTE:</b> Accidentabilidad bajo control y cumpliendo metas.")
     
+    # Análisis Siniestralidad
     if row_mes['Tasa Sin.'] > 0:
-        insights.append(f"🚑 <b>SINIESTRALIDAD:</b> {int(row_mes['Días Perdidos'])} días perdidos.")
+        insights.append(f"🚑 <b>SINIESTRALIDAD:</b> En {row_mes['Mes']} se registraron {int(row_mes['Días Perdidos'])} días perdidos.")
     
-    if not insights: return "Desempeño normal."
+    # Análisis Gestión
+    insp_cumpl = (row_mes['Insp. Ejecutadas']/row_mes['Insp. Programadas']*100) if row_mes['Insp. Programadas']>0 else 0
+    if insp_cumpl < metas['meta_gestion']:
+        insights.append(f"📉 <b>GESTIÓN:</b> Cumplimiento de inspecciones bajo ({insp_cumpl:.0f}%). Reforzar terreno.")
+
+    if not insights: return "Desempeño dentro de parámetros normales."
     return "<br>".join(insights)
 
 if 'df_main' not in st.session_state:
     st.session_state['df_main'] = load_data()
 
-# --- 3. BARRA LATERAL ---
+# --- 3. BARRA LATERAL PROFESIONAL ---
 with st.sidebar:
-    st.title("🌲 Configuración Pro")
-    uploaded_logo = st.file_uploader("Subir Logo", type=['png', 'jpg'])
-    logo_path = "logo_temp.png"
-    if uploaded_logo:
-        with open(logo_path, "wb") as f: f.write(uploaded_logo.getbuffer())
+    st.title("🌲 Panel de Control")
     
+    # GESTIÓN DE LOGO (PERSISTENTE)
+    st.markdown("### 🖼️ Imagen Corporativa")
+    uploaded_logo = st.file_uploader("Actualizar Logo", type=['png', 'jpg'])
+    if uploaded_logo:
+        with open(LOGO_FILE, "wb") as f:
+            f.write(uploaded_logo.getbuffer())
+        st.success("Logo actualizado.")
+        st.rerun()
+    
+    # Mostrar logo actual en sidebar si existe
+    if os.path.exists(LOGO_FILE):
+        st.image(LOGO_FILE, use_container_width=True)
+
     st.markdown("---")
     st.markdown("### 📅 Gestión de Años")
     
-    # 1. BOTÓN RÁPIDO PARA AÑOS FALTANTES
+    # Botón rápido año anterior
     years_present = st.session_state['df_main']['Año'].unique()
     if 2025 not in years_present:
         if st.button("⚠️ Activar Año 2025"):
             df_new = get_structure_for_year(2025)
             st.session_state['df_main'] = pd.concat([st.session_state['df_main'], df_new], ignore_index=True)
-            st.session_state['df_main'] = save_data(st.session_state['df_main'])
+            save_data(st.session_state['df_main'])
             st.rerun()
             
-    # 2. CREAR CUALQUIER AÑO
-    new_year_input = st.number_input("Agregar otro año:", min_value=2000, max_value=2050, value=2024)
-    if st.button("➕ Crear Año Seleccionado"):
+    # Crear cualquier año
+    new_year_input = st.number_input("Agregar Año:", min_value=2000, max_value=2050, value=2024)
+    if st.button("➕ Crear Año"):
         if new_year_input in years_present:
-            st.warning("Ese año ya existe.")
+            st.warning("Año ya existe.")
         else:
             df_new = get_structure_for_year(new_year_input)
             st.session_state['df_main'] = pd.concat([st.session_state['df_main'], df_new], ignore_index=True)
-            st.session_state['df_main'] = save_data(st.session_state['df_main'])
+            save_data(st.session_state['df_main'])
             st.success(f"Año {new_year_input} creado.")
             st.rerun()
 
     st.markdown("---")
-    if st.button("♻️ Resetear Base de Datos (2024-2026)"):
-        save_data(inicializar_db_completa())
-        st.session_state['df_main'] = load_data()
-        st.rerun()
+    # EXPORTAR EXCEL (NUEVA MEJORA)
+    def to_excel(df):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='SST_Data')
+        return output.getvalue()
+    
+    excel_data = to_excel(st.session_state['df_main'])
+    st.download_button("📊 Descargar Excel Completo", data=excel_data, file_name="Base_SST_Completa.xlsx")
 
-    # Metas
+    # Metas Configurables
     st.markdown("---")
+    st.markdown("### 🎯 Metas KPI")
     meta_ta = st.slider("Meta Tasa Acc. (%)", 0.0, 5.0, 3.0)
     meta_gestion = st.slider("Meta Gestión (%)", 50, 100, 90)
     metas = {'meta_ta': meta_ta, 'meta_gestion': meta_gestion}
@@ -140,7 +171,7 @@ with st.sidebar:
 # --- 4. MOTOR PDF ---
 class PDF_SST(FPDF):
     def header(self):
-        if os.path.exists(logo_path): self.image(logo_path, 10, 8, 40)
+        if os.path.exists(LOGO_FILE): self.image(LOGO_FILE, 10, 8, 40)
         self.set_xy(55, 12); self.set_font('Arial', 'B', 14)
         self.cell(0, 6, 'SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA', 0, 1, 'L')
         self.set_xy(55, 19); self.set_font('Arial', 'B', 11); self.set_text_color(100)
@@ -164,16 +195,15 @@ class PDF_SST(FPDF):
 
 # --- 5. DASHBOARD ---
 df = st.session_state['df_main']
-tab_dash, tab_editor = st.tabs(["📊 DASHBOARD", "📝 EDITOR DE DATOS"])
+tab_dash, tab_editor = st.tabs(["📊 DASHBOARD INTELIGENTE", "📝 EDITOR DE DATOS"])
 
-# Lógica Global
 years = sorted(df['Año'].unique(), reverse=True)
-if not years: years = [2026] # Fallback
+if not years: years = [2026]
 
 with tab_dash:
     c1, c2 = st.columns([1, 4])
     with c1:
-        if os.path.exists(logo_path): st.image(logo_path, width=160)
+        if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, width=160)
     with c2:
         st.title("SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA")
         st.markdown("### SISTEMA DE GESTIÓN EN SST DS44")
@@ -181,7 +211,6 @@ with tab_dash:
     col_y, col_m = st.columns(2)
     sel_year = col_y.selectbox("Año Fiscal", years)
     
-    # Filtrar Año
     df_year = df[df['Año'] == sel_year].copy()
     df_year['Mes_Idx'] = df_year['Mes'].apply(lambda x: MESES_ORDEN.index(x) if x in MESES_ORDEN else 99)
     df_year = df_year.sort_values('Mes_Idx')
@@ -191,11 +220,11 @@ with tab_dash:
     
     sel_month = col_m.selectbox("Mes de Cierre", months_avail, index=len(months_avail)-1 if months_avail else 0)
     
-    # Cálculos
     row_mes = df_year[df_year['Mes'] == sel_month].iloc[0]
     idx_corte = MESES_ORDEN.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
     
+    # Cálculos Acumulados
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_dias = df_acum['Días Perdidos'].sum()
     sum_hht = df_acum['HHT'].sum()
@@ -206,45 +235,52 @@ with tab_dash:
     if_acum = (sum_acc * 1000000 / sum_hht) if sum_hht > 0 else 0
     ig_acum = ((sum_dias + df_acum['Días Cargo'].sum()) * 1000000 / sum_hht) if sum_hht > 0 else 0
     
+    # Gestión
     def safe_div(a, b): return (a/b*100) if b > 0 else 0
     p_insp = safe_div(row_mes['Insp. Ejecutadas'], row_mes['Insp. Programadas'])
     p_cap = safe_div(row_mes['Cap. Ejecutadas'], row_mes['Cap. Programadas'])
     p_medidas = safe_div(row_mes['Medidas Cerradas'], row_mes['Medidas Abiertas']) if row_mes['Medidas Abiertas']>0 else 100
     p_salud = safe_div(row_mes['Vig. Salud Vigente'], row_mes['Expuestos Silice/Ruido']) if row_mes['Expuestos Silice/Ruido']>0 else 100
 
+    # Insight
     insight_text = generar_insight_automatico(row_mes, ta_acum, metas)
+    st.info("💡 **ANÁLISIS INTELIGENTE:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     st.markdown("---")
 
+    # KPIs
+    st.markdown(f"#### 🔵 INDICADORES DEL MES ({sel_month})")
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Tasa Acc. Mes", f"{row_mes['Tasa Acc.']:.2f}%")
-    k2.metric("Tasa Sin. Mes", f"{row_mes['Tasa Sin.']:.2f}")
-    k3.metric("IF Mes", f"{row_mes['Indice Frec.']:.2f}")
-    k4.metric("IG Mes", f"{row_mes['Indice Grav.']:.0f}")
+    k1.metric("Tasa Accidentabilidad", f"{row_mes['Tasa Acc.']:.2f}%")
+    k2.metric("Tasa Siniestralidad", f"{row_mes['Tasa Sin.']:.2f}")
+    k3.metric("Indice Frecuencia", f"{row_mes['Indice Frec.']:.2f}")
+    k4.metric("Indice Gravedad", f"{row_mes['Indice Grav.']:.0f}")
 
     st.markdown(f"#### 🔴 ACUMULADO ANUAL ({sel_year})")
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("T. Acc. Acumulada", f"{ta_acum:.2f}%", f"Meta: {metas['meta_ta']}%", delta_color="inverse")
+    delta_col = "normal" if ta_acum <= metas['meta_ta'] else "inverse"
+    a1.metric("T. Acc. Acumulada", f"{ta_acum:.2f}%", f"Meta: {metas['meta_ta']}%", delta_color=delta_col)
     a2.metric("T. Sin. Acumulada", f"{ts_acum:.2f}")
     a3.metric("I. Frec. Acumulado", f"{if_acum:.2f}")
     a4.metric("I. Grav. Acumulado", f"{ig_acum:.0f}")
 
     st.markdown("#### 📋 Gestión")
     g1, g2, g3, g4 = st.columns(4)
-    def donut(val, title, color):
+    def donut(val, title):
+        color = "#66BB6A" if val >= metas['meta_gestion'] else "#EF5350"
         fig = go.Figure(go.Pie(values=[val, 100-val], hole=0.7, marker_colors=[color, '#eee'], textinfo='none'))
         fig.update_layout(height=120, margin=dict(t=0,b=0,l=0,r=0), annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=16, showarrow=False)])
         st.markdown(f"<div style='text-align:center; font-size:13px;'>{title}</div>", unsafe_allow_html=True)
         st.plotly_chart(fig, use_container_width=True, key=title)
 
-    with g1: donut(p_insp, "Inspecciones", "#42A5F5")
-    with g2: donut(p_cap, "Capacitaciones", "#66BB6A")
-    with g3: donut(p_medidas, "Hallazgos", "#FFA726")
-    with g4: donut(p_salud, "Salud", "#AB47BC")
+    with g1: donut(p_insp, "Inspecciones")
+    with g2: donut(p_cap, "Capacitaciones")
+    with g3: donut(p_medidas, "Hallazgos")
+    with g4: donut(p_salud, "Salud")
 
     # PDF
     st.markdown("---")
-    if st.button("📄 Generar PDF"):
+    if st.button("📄 Generar Reporte PDF"):
         pdf = PDF_SST(orientation='P', format='A4')
         pdf.add_page(); pdf.set_font('Arial', 'B', 12)
         pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'L'); pdf.ln(2)
@@ -281,24 +317,20 @@ with tab_dash:
         pdf.cell(80, 5, "Firma Experto", 0, 0, 'C')
         
         out = pdf.output(dest='S').encode('latin-1')
-        st.download_button("📥 Descargar", out, f"Reporte_{sel_month}_{sel_year}.pdf", "application/pdf")
+        st.download_button("📥 Descargar Reporte PDF", out, f"Reporte_{sel_month}_{sel_year}.pdf", "application/pdf")
 
 with tab_editor:
     st.subheader("📝 Carga de Datos")
     
-    # SELECCIÓN ROBUSTA DE AÑO/MES
+    # Selectores Robustos
     col_sel_y, col_sel_m = st.columns(2)
+    edit_year = col_sel_y.selectbox("Año:", years, key="ed_y")
     
-    # 1. Selector de Año (de los disponibles)
-    avail_years = sorted(df['Año'].unique(), reverse=True)
-    edit_year = col_sel_y.selectbox("Año:", avail_years, key="ed_y")
-    
-    # 2. Selector de Mes (del año seleccionado)
+    # Obtener meses para ese año
     months_in_year = df[df['Año'] == edit_year]['Mes'].tolist()
     months_in_year.sort(key=lambda x: MESES_ORDEN.index(x) if x in MESES_ORDEN else 99)
     edit_month = col_sel_m.selectbox("Mes:", months_in_year, key="ed_m")
     
-    # 3. Encontrar índice
     try:
         row_idx = df.index[(df['Año'] == edit_year) & (df['Mes'] == edit_month)].tolist()[0]
         
