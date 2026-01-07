@@ -10,16 +10,26 @@ import os
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Reporte SST", layout="wide", page_icon="⛑️")
 
-# --- ESTILOS CSS (DISEÑO EXACTO TIPO EXCEL) ---
+# --- ESTILOS CSS (CORREGIDO PARA QUE NO SE CORTE EL TÍTULO) ---
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 2rem; }
+    /* AJUSTE CLAVE: Aumenté el padding-top a 3.5rem para bajar el contenido */
+    .block-container { 
+        padding-top: 3.5rem; 
+        padding-bottom: 2rem; 
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }
+    
+    /* Opcional: Ocultar el menú hamburguesa y el footer de Streamlit para más limpieza */
+    #MainMenu {visibility: visible;}
+    footer {visibility: hidden;}
     
     /* Cajas de KPIs */
     .kpi-box {
         color: white;
         text-align: center;
-        border-radius: 0px; /* Cuadrado como excel */
+        border-radius: 0px; 
         height: 80px;
         display: flex;
         flex-direction: column;
@@ -28,17 +38,7 @@ st.markdown("""
         margin-bottom: 5px;
         border: 1px solid #ddd;
     }
-    .kpi-title { font-size: 12px; font-weight: normal; margin-bottom: 0px; line-height: 1.2; color: black;}
-    .kpi-value-box { 
-        width: 100%; 
-        height: 100%; 
-        display: flex; 
-        align-items: center; 
-        justify-content: center; 
-        font-size: 35px; 
-        font-weight: bold; 
-        color: white;
-    }
+    .kpi-title { font-size: 11px; font-weight: normal; margin-bottom: 0px; line-height: 1.2; color: black; }
     
     /* Colores exactos */
     .bg-orange { background-color: #FFC000; } 
@@ -47,20 +47,21 @@ st.markdown("""
     .bg-green { background-color: #00B050; } 
     .bg-red { background-color: #C00000; } 
     
-    /* Header Rojo */
+    /* Header Rojo - Aseguramos que tenga espacio */
     .main-header {
         background-color: #C00000;
         color: white;
-        padding: 5px;
+        padding: 8px;
         text-align: center;
         font-weight: bold;
-        font-size: 20px;
-        margin-bottom: 15px;
+        font-size: 22px;
+        margin-bottom: 20px;
         text-transform: uppercase;
         border: 1px solid black;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
     }
 
-    /* Estilos para la tabla de fecha (Mes/Año) */
+    /* Tabla Fecha */
     .date-table {
         width: 100%;
         border-collapse: collapse;
@@ -70,7 +71,7 @@ st.markdown("""
         margin-bottom: 10px;
     }
     .date-header {
-        background-color: #FFC000; /* Naranja claro */
+        background-color: #FFC000; 
         border: 1px solid black;
         font-weight: bold;
         font-size: 12px;
@@ -81,11 +82,11 @@ st.markdown("""
         font-weight: bold;
     }
 
-    /* Caja Verde Gigante (Días sin accidentes) */
+    /* Caja Verde Gigante */
     .days-container {
-        background-color: #164020; /* Verde muy oscuro */
+        background-color: #164020; 
         color: white;
-        border: 3px solid #00B050; /* Borde verde claro */
+        border: 3px solid #00B050; 
         padding: 15px;
         text-align: center;
         border-radius: 10px;
@@ -100,8 +101,6 @@ if 'data_main' not in st.session_state:
 # --- BARRA LATERAL ---
 st.sidebar.title("Configuración")
 uploaded_file = st.sidebar.file_uploader("📂 Cargar Datos (Excel/CSV)", type=["csv", "xlsx"])
-
-# Opción extra: Si quieres subir el logo desde la app en vez de guardarlo en la carpeta
 uploaded_logo = st.sidebar.file_uploader("🖼️ Cargar Logo (Opcional)", type=["png", "jpg", "jpeg"])
 
 def load_data(file):
@@ -112,7 +111,6 @@ def load_data(file):
             else: df = pd.read_excel(file)
         except: pass
     else:
-        # URL Respaldo
         url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSHnEKxzb-M3T0PjzyA1zPv_h-awqQ0og6imzQ5uHJG8wk85-WBBgtoCWC9FnusngmDw72kL88tduR3/pub?gid=1349054762&single=true&output=csv"
         try: df = pd.read_csv(url)
         except: pass
@@ -127,7 +125,6 @@ def load_data(file):
         df = df.rename(columns=mapa)
         if 'MES' in df.columns: df['MES'] = pd.to_datetime(df['MES'])
         
-        # Rellenar nulos numéricos con 0
         cols_num = ['ACCIDENTES', 'ACTOS INSEGUROS', 'CONDICIONES INSEGURAS', 'IF', 'IS', 'IG', 
                    'INSPECCIONES PROGRAMADAS', 'INSPECCIONES EJECUTADAS', 
                    'CAPACITACIONES PROGRAMADAS', 'CAPACITACIONES EJECUTUDAS']
@@ -141,7 +138,7 @@ if uploaded_file or st.session_state['data_main'].empty:
     st.session_state['data_main'] = load_data(uploaded_file)
 df = st.session_state['data_main']
 
-# --- FORMULARIO MANUAL ---
+# --- MANUAL INPUT ---
 with st.sidebar.expander("📝 Ingreso Manual"):
     f_fecha = st.date_input("Fecha")
     f_acc = st.number_input("Accidentes", 0)
@@ -156,7 +153,7 @@ with st.sidebar.expander("📝 Ingreso Manual"):
 df = st.session_state['data_main']
 if df.empty: st.stop()
 
-# --- LÓGICA DE FILTROS ---
+# --- LOGICA FILTROS ---
 years = sorted(df['MES'].dt.year.unique(), reverse=True)
 selected_year = st.sidebar.selectbox("Año Reporte", years)
 df_year = df[df['MES'].dt.year == selected_year]
@@ -170,17 +167,15 @@ month_text = month_names[selected_month_num]
 df_month = df_year[df_year['MES'].dt.month == selected_month_num]
 df_acumulado = df_year[df_year['MES'].dt.month <= selected_month_num]
 
-# --- LAYOUT DASHBOARD ---
+# --- DASHBOARD ---
 
-# 1. HEADER
+# 1. HEADER (Ahora con espacio seguro arriba)
 st.markdown('<div class="main-header">REPORTE MENSUAL DE EVENTOS DE SST</div>', unsafe_allow_html=True)
 
-# 2. FILA SUPERIOR (LOGO Y KPIs)
-# Definimos columnas: C1 (Logo/Fecha) y luego C2-C6 (KPIs)
+# 2. LOGO Y KPIs
 c1, c2, c3, c4, c5, c6 = st.columns([1.5, 2, 2, 2, 2, 2])
 
 with c1:
-    # A) Tabla pequeña MES | AÑO
     html_date = f"""
     <table class="date-table">
         <tr><td class="date-header">MES</td><td class="date-header">AÑO</td></tr>
@@ -189,29 +184,21 @@ with c1:
     """
     st.markdown(html_date, unsafe_allow_html=True)
     
-    # B) LOGO (Maderas G&D)
-    # Prioridad: 1. Archivo subido en sidebar, 2. Archivo local "logo-maderas-gd-1.png", 3. Fallback
-    if uploaded_logo:
-        st.image(uploaded_logo, use_container_width=True)
-    elif os.path.exists("logo-maderas-gd-1.png"):
-        st.image("logo-maderas-gd-1.png", use_container_width=True)
-    else:
-        # Si no encuentra el logo, pone un texto o logo genérico para que no falle
-        st.info("Sube 'logo-maderas-gd-1.png'")
+    if uploaded_logo: st.image(uploaded_logo, use_container_width=True)
+    elif os.path.exists("logo-maderas-gd-1.png"): st.image("logo-maderas-gd-1.png", use_container_width=True)
+    else: st.info("Sube Logo")
 
-# Valores KPIs
 v_actos = int(df_month['ACTOS INSEGUROS'].sum()) if not df_month.empty else 0
 v_cond = int(df_month['CONDICIONES INSEGURAS'].sum()) if not df_month.empty else 0
 v_sev = df_month['IS'].sum() if 'IS' in df_month.columns else 0
 v_frec = df_month['IF'].sum() if 'IF' in df_month.columns else 0
 v_grav = df_month['IG'].sum() if 'IG' in df_month.columns else 0
 
-# Función auxiliar para renderizar cajitas HTML
 def kpi_html(title, value, color_class):
     return f"""
     <div style="display:flex; align-items:center; border:1px solid #ccc; margin-bottom:5px;">
-        <div style="width:40%; padding:5px; font-size:11px; font-weight:bold; line-height:1.2;">{title}</div>
-        <div class="{color_class}" style="width:60%; height:70px; display:flex; align-items:center; justify-content:center; color:white; font-size:30px; font-weight:bold;">
+        <div style="width:40%; padding:2px; font-size:10px; font-weight:bold; line-height:1.1; text-align:center;">{title}</div>
+        <div class="{color_class}" style="width:60%; height:70px; display:flex; align-items:center; justify-content:center; color:white; font-size:28px; font-weight:bold;">
             {value}
         </div>
     </div>
@@ -225,27 +212,22 @@ with c6: st.markdown(kpi_html("Indice de Gravedad", f"{v_grav:.2f}".replace('.',
 
 st.markdown("---")
 
-# 3. GRÁFICOS CENTRALES
+# 3. GRÁFICOS
 g1, g2, g3 = st.columns(3)
+meses_num = list(range(1, 13))
 
 with g1:
-    fig1 = go.Figure()
-    # Eje X numérico 1-12
-    meses_num = list(range(1, 13))
-    # Datos simulados de todo el año para la linea
     y_actos = [df_year[df_year['MES'].dt.month == m]['ACTOS INSEGUROS'].sum() for m in meses_num]
     y_cond = [df_year[df_year['MES'].dt.month == m]['CONDICIONES INSEGURAS'].sum() for m in meses_num]
-    
+    fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=meses_num, y=y_actos, name='ACTOS', line=dict(color='#5B9BD5', width=3)))
     fig1.add_trace(go.Scatter(x=meses_num, y=y_cond, name='CONDICIONES', line=dict(color='#C00000', width=3)))
-    fig1.update_layout(title="", xaxis=dict(tickmode='linear', tick0=1, dtick=1), 
-                       margin=dict(l=20,r=20,t=10,b=20), height=250, legend=dict(orientation="h", y=-0.2))
+    fig1.update_layout(xaxis=dict(tickmode='linear', tick0=1, dtick=1), margin=dict(l=20,r=20,t=10,b=20), height=250, legend=dict(orientation="h", y=-0.2))
     st.plotly_chart(fig1, use_container_width=True)
 
 with g2:
     st.markdown("<div style='text-align:center; background-color:#002060; color:white; font-size:12px;'>ACUMULADO</div>", unsafe_allow_html=True)
     tot_acc = df_acumulado['ACCIDENTES'].sum()
-    # Usamos incidente como ejemplo si no tienes columna incidentes
     tot_inc = 0 
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(x=['ACCIDENTES'], y=[tot_acc], marker_color='#5B9BD5', width=0.3))
@@ -261,9 +243,9 @@ with g3:
     fig3.update_layout(barmode='group', margin=dict(l=20,r=20,t=10,b=20), height=220, showlegend=True, legend=dict(orientation="h", y=1.1))
     st.plotly_chart(fig3, use_container_width=True)
 
-# 4. SECCIÓN INFERIOR
 st.markdown("---")
-# Títulos Naranjas
+
+# 4. TABLAS Y DIAS SIN ACCIDENTES
 st.markdown("""
 <div style="display:flex; width:100%;">
     <div style="width:33%; background-color:#FFC000; padding:2px 5px; font-weight:bold; font-style:italic; border:1px solid black;">INSPECCIONES EN EL MES</div>
@@ -274,13 +256,11 @@ st.markdown("""
 
 col_b1, col_b2, col_b3 = st.columns(3)
 
-# INSPECCIONES
 with col_b1:
     insp_p = int(df_month['INSPECCIONES PROGRAMADAS'].sum()) if 'INSPECCIONES PROGRAMADAS' in df_month.columns else 0
     insp_e = int(df_month['INSPECCIONES EJECUTADAS'].sum()) if 'INSPECCIONES EJECUTADAS' in df_month.columns else 0
     st.write(f"**PROGRAMADAS:** {insp_p}")
     st.write(f"**EJECUTADAS:** {insp_e}")
-    # Barra simple
     fig_i = go.Figure(data=[
         go.Bar(name='Prog', x=[insp_p], y=[''], orientation='h', marker_color='#C00000'),
         go.Bar(name='Ejec', x=[insp_e], y=[''], orientation='h', marker_color='#00B050')
@@ -288,7 +268,6 @@ with col_b1:
     fig_i.update_layout(height=100, margin=dict(l=0,r=0,t=0,b=0), showlegend=True, barmode='group', legend=dict(orientation="h", y=-0.5))
     st.plotly_chart(fig_i, use_container_width=True)
 
-# CAPACITACIONES
 with col_b2:
     cap_p = int(df_month['CAPACITACIONES PROGRAMADAS'].sum()) if 'CAPACITACIONES PROGRAMADAS' in df_month.columns else 0
     cap_e = int(df_month['CAPACITACIONES EJECUTUDAS'].sum()) if 'CAPACITACIONES EJECUTUDAS' in df_month.columns else 0
@@ -301,14 +280,11 @@ with col_b2:
     fig_c.update_layout(height=100, margin=dict(l=0,r=0,t=0,b=0), showlegend=False, barmode='group')
     st.plotly_chart(fig_c, use_container_width=True)
 
-# DÍAS SIN ACCIDENTES
 with col_b3:
-    # Lógica de fecha
     fecha_acc = datetime.now()
     if not df.empty:
         accs = df[df['ACCIDENTES'] > 0]
-        if not accs.empty:
-            fecha_acc = accs['MES'].max()
+        if not accs.empty: fecha_acc = accs['MES'].max()
     
     diff = relativedelta.relativedelta(datetime.now(), fecha_acc)
     
@@ -320,11 +296,4 @@ with col_b3:
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown("**OBSERVACIONES**")
     st.caption("Se asume el departamento de PP.RR de la empresa con fecha 21/10/2025...")
-
-# PDF Generador (Oculto en expander para no ensuciar)
-with st.sidebar.expander("🖨️ Generar PDF"):
-    if st.button("Descargar Reporte"):
-        st.toast("Función PDF disponible (configurar librería)")
