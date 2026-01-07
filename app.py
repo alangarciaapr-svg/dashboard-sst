@@ -14,7 +14,6 @@ st.set_page_config(page_title="SGSST - DS 44", layout="wide", page_icon="🛡️
 CSV_FILE = "base_datos_sgsst.csv"
 
 def crear_estructura_completa():
-    """Crea la estructura de datos para un Dashboard Integral (Seguridad + Salud + Gestión)."""
     return pd.DataFrame({
         'Año': [2024],
         'Mes': ['Enero'],
@@ -30,7 +29,7 @@ def crear_estructura_completa():
         'Insp. Ejecutadas': [10],
         'Cap. Programadas': [5],
         'Cap. Ejecutadas': [5],
-        'Cierre Medidas Correctivas (%)': [100], # Nuevo: Eficacia
+        'Cierre Medidas Correctivas (%)': [100], 
         # SALUD OCUPACIONAL (DS 44 / MINSAL)
         'Expuestos Ruido (PREXOR)': [0],
         'Vigilancia Salud al Día (%)': [100],
@@ -41,8 +40,8 @@ def cargar_datos():
     if os.path.exists(CSV_FILE):
         try:
             df = pd.read_csv(CSV_FILE)
-            # Auto-reparación si faltan columnas nuevas
             columnas_nuevas = ['Cierre Medidas Correctivas (%)', 'Expuestos Ruido (PREXOR)', 'Vigilancia Salud al Día (%)']
+            # Si faltan columnas, regenerar estructura para evitar errores
             if not all(col in df.columns for col in columnas_nuevas):
                 return crear_estructura_completa()
             return df
@@ -57,19 +56,10 @@ def guardar_cambios(df):
 if 'df_sgsst' not in st.session_state:
     st.session_state['df_sgsst'] = cargar_datos()
 
-# --- 3. ESTILOS CSS (LOGO A LA IZQUIERDA) ---
+# --- 3. ESTILOS CSS ---
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; }
-    
-    /* Header Principal */
-    .main-header {
-        border-bottom: 2px solid #B71C1C;
-        padding-bottom: 10px;
-        margin-bottom: 20px;
-    }
-    
-    /* Tarjetas KPIs */
     .kpi-card {
         background-color: white;
         border: 1px solid #e0e0e0;
@@ -86,7 +76,6 @@ st.markdown("""
     .kpi-value { font-size: 26px; font-weight: bold; color: #222; }
     .kpi-footer { font-size: 11px; color: #888; margin-top: 5px; }
     
-    /* Indicadores de Estado (Semáforo) */
     .status-good { color: #2E7D32; }
     .status-warning { color: #F57C00; }
     .status-bad { color: #C62828; }
@@ -97,7 +86,6 @@ st.markdown("""
 with st.sidebar:
     st.header("⚙️ Configuración")
     
-    # LOGO (Se carga aquí pero se muestra en el layout principal)
     uploaded_logo = st.file_uploader("Subir Logo Empresa", type=['png', 'jpg', 'jpeg'])
     logo_path = "logo_empresa.png"
     if uploaded_logo:
@@ -111,16 +99,13 @@ with st.sidebar:
         guardar_cambios(df_reset)
         st.rerun()
 
-# --- 5. LOGICA DE CÁLCULO ---
+# --- 5. LÓGICA DE CÁLCULO ---
 df = st.session_state['df_sgsst']
-
-# Filtros
 tab_dash, tab_data = st.tabs(["📊 DASHBOARD DE GESTIÓN (DS 44)", "📝 INGRESO DE DATOS"])
 
 with tab_dash:
-    # --- LAYOUT SUPERIOR: LOGO IZQUIERDA + TITULO ---
+    # --- HEADER ---
     col_header_1, col_header_2 = st.columns([1, 4])
-    
     with col_header_1:
         if os.path.exists(logo_path):
             st.image(logo_path, width=150)
@@ -144,12 +129,10 @@ with tab_dash:
     df_year = df[df['Año'] == sel_year]
     
     months = df_year['Mes'].unique().tolist()
-    # Orden lógico de meses
     orden_meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
     months = sorted(months, key=lambda x: orden_meses.index(x) if x in orden_meses else 99)
     sel_month = col_sel2.selectbox("Mes de Reporte", months, index=len(months)-1 if months else 0)
     
-    # Filtrar Mes Específico
     df_month = df_year[df_year['Mes'] == sel_month]
     
     if not df_month.empty:
@@ -160,11 +143,9 @@ with tab_dash:
         dp = df_month['Días Perdidos'].values[0]
         dc = df_month['Días Cargo'].values[0]
         
-        # Tasas
         tasa_acc = (acc / masa * 100) if masa > 0 else 0
         tasa_sin = (dp / masa * 100) if masa > 0 else 0
         if_mensual = (acc * 1000000 / hht) if hht > 0 else 0
-        ig_mensual = ((dp + dc) * 1000000 / hht) if hht > 0 else 0
         
         # Gestión
         insp_p = df_month['Insp. Programadas'].values[0]
@@ -177,12 +158,11 @@ with tab_dash:
         
         cierre_medidas = df_month['Cierre Medidas Correctivas (%)'].values[0]
         vigilancia_salud = df_month['Vigilancia Salud al Día (%)'].values[0]
-        
     else:
         st.error("No hay datos para este mes.")
         st.stop()
 
-    # --- SECCIÓN 1: INDICADORES DE RESULTADO (SEGURIDAD) ---
+    # --- SECCIÓN KPIs ---
     st.markdown("### 🚑 Indicadores de Siniestralidad (Reactivos)")
     k1, k2, k3, k4 = st.columns(4)
     
@@ -202,11 +182,10 @@ with tab_dash:
 
     st.markdown("---")
     
-    # --- SECCIÓN 2: INDICADORES DE GESTIÓN (PROACTIVOS) ---
+    # --- SECCIÓN GESTIÓN ---
     st.markdown("### 📋 Gestión Preventiva y Salud (DS 44)")
     g1, g2, g3, g4 = st.columns(4)
     
-    # Gráfico de dona simple para cumplimiento
     def plot_donut(val, title, color):
         fig = go.Figure(go.Pie(
             values=[val, 100-val], 
@@ -215,12 +194,8 @@ with tab_dash:
             marker_colors=[color, '#eee'],
             textinfo='none'
         ))
-        fig.update_layout(
-            showlegend=False, 
-            height=120, 
-            margin=dict(t=0, b=0, l=0, r=0),
-            annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=20, showarrow=False)]
-        )
+        fig.update_layout(showlegend=False, height=120, margin=dict(t=0, b=0, l=0, r=0),
+            annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=20, showarrow=False)])
         st.markdown(f"<div style='text-align:center; font-weight:bold; font-size:14px;'>{title}</div>", unsafe_allow_html=True)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -231,23 +206,19 @@ with tab_dash:
 
     st.markdown("---")
     
-    # --- SECCIÓN 3: GRÁFICOS EVOLUTIVOS ---
+    # --- GRÁFICOS ---
     c_graf1, c_graf2 = st.columns(2)
-    
     with c_graf1:
         st.subheader("Tendencia Anual: Accidentabilidad")
-        # Calc anual
         df_year['Tasa_Acc'] = (df_year['Accidentes CTP'] / df_year['Masa Laboral']) * 100
-        fig_line = px.line(df_year, x='Mes', y='Tasa_Acc', markers=True, 
-                           title="Evolución Tasa Mensual")
+        fig_line = px.line(df_year, x='Mes', y='Tasa_Acc', markers=True, title="Evolución Tasa Mensual")
         fig_line.update_traces(line_color='#B71C1C', line_width=3)
         fig_line.update_layout(height=300)
         st.plotly_chart(fig_line, use_container_width=True)
         
     with c_graf2:
         st.subheader("Gestión de Salud: Expuestos (PREXOR)")
-        fig_bar = px.bar(df_year, x='Mes', y='Expuestos Ruido (PREXOR)', 
-                         title="Trabajadores en Vigilancia Ruido")
+        fig_bar = px.bar(df_year, x='Mes', y='Expuestos Ruido (PREXOR)', title="Trabajadores en Vigilancia Ruido")
         fig_bar.update_traces(marker_color='#8E24AA')
         fig_bar.update_layout(height=300)
         st.plotly_chart(fig_bar, use_container_width=True)
@@ -258,10 +229,8 @@ with tab_dash:
     if st.button("Generar PDF DS 44"):
         class PDF(FPDF):
             def header(self):
-                # Logo Izquierda
                 if os.path.exists(logo_path):
                     self.image(logo_path, 10, 8, 33)
-                # Título Derecha
                 self.set_font('Arial', 'B', 15)
                 self.set_xy(50, 10)
                 self.cell(0, 10, 'INFORME MENSUAL DE GESTIÓN SST', 0, 1, 'R')
@@ -270,21 +239,18 @@ with tab_dash:
                 self.cell(0, 10, 'CONFORMIDAD NORMATIVA VIGENTE (DS 44)', 0, 1, 'R')
                 self.ln(15)
                 self.set_draw_color(183, 28, 28)
-                self.line(10, 30, 290, 30) # Línea roja
+                self.line(10, 30, 290, 30)
 
         pdf = PDF(orientation='L', format='A4')
         pdf.add_page()
         
-        # Datos Generales
         pdf.set_font('Arial', 'B', 12)
         pdf.set_xy(10, 35)
         pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'L')
         
-        # Tabla de Indicadores (Manual para control total)
+        # Tabla
         pdf.set_fill_color(240, 240, 240)
         pdf.set_font('Arial', 'B', 10)
-        
-        # Cabeceras
         headers = ["INDICADOR", "VALOR DEL MES", "UNIDAD", "ESTADO"]
         w_col = [80, 50, 50, 50]
         
@@ -293,7 +259,6 @@ with tab_dash:
             pdf.cell(w_col[i], 10, h, 1, 0, 'C', 1)
         pdf.ln()
         
-        # Filas de Datos
         data_rows = [
             ("TASA ACCIDENTABILIDAD", f"{tasa_acc:.2f}", "%", "CRÍTICO" if tasa_acc > 3 else "NORMAL"),
             ("TASA SINIESTRALIDAD", f"{tasa_sin:.2f}", "Días/Trab", "-"),
@@ -309,42 +274,30 @@ with tab_dash:
             pdf.cell(w_col[0], 10, row[0], 1, 0, 'L')
             pdf.cell(w_col[1], 10, row[1], 1, 0, 'C')
             pdf.cell(w_col[2], 10, row[2], 1, 0, 'C')
-            
-            # Color condicional simple para PDF
-            status = row[3]
-            if status in ["CRÍTICO", "BAJO", "ALERTA"]:
-                pdf.set_text_color(200, 0, 0)
-            elif status in ["NORMAL", "OPTIMO", "OK", "CERRADO"]:
-                pdf.set_text_color(0, 150, 0)
-            else:
-                pdf.set_text_color(0, 0, 0)
-                
-            pdf.cell(w_col[3], 10, status, 1, 0, 'C')
-            pdf.set_text_color(0, 0, 0) # Reset
+            pdf.cell(w_col[3], 10, row[3], 1, 0, 'C')
             pdf.ln()
 
-        # Insertar Gráfico (Requiere Kaleido)
+        # Insertar Gráfico CON SEGURIDAD (TRY/EXCEPT)
         try:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 fig_line.write_image(tmp.name, width=700, height=300)
                 pdf.image(tmp.name, x=20, y=130, w=150)
-        except:
+        except Exception as e:
             pdf.set_xy(20, 130)
-            pdf.cell(0, 10, "(Gráfico no disponible: falta librería kaleido)", 0, 1)
+            pdf.set_font('Arial', 'I', 10)
+            pdf.set_text_color(255, 0, 0)
+            pdf.cell(0, 10, f"Nota: Gráfico no disponible en PDF (Falta librería Kaleido en servidor)", 0, 1)
 
-        # Footer
         pdf.set_xy(10, 190)
         pdf.set_font('Arial', 'I', 8)
-        pdf.multi_cell(0, 5, "Este documento certifica el desempeño del SGSST conforme a los requisitos del DS 44 y normativas complementarias (DS 67, DS 594, Protocolos MINSAL).")
+        pdf.set_text_color(0, 0, 0)
+        pdf.multi_cell(0, 5, "Este documento certifica el desempeño del SGSST conforme a los requisitos del DS 44.")
         
         pdf_bytes = pdf.output(dest='S').encode('latin-1')
         st.download_button("📥 Descargar Reporte PDF", pdf_bytes, "Reporte_SGSST.pdf", "application/pdf")
 
-
 with tab_data:
     st.subheader("📝 Base de Datos Maestra (Editable)")
-    st.info("Ingresa aquí todos los datos mensuales. Los KPIs se recalculan automáticamente.")
-    
     config_cols = {
         "Mes": st.column_config.SelectboxColumn("Mes", options=orden_meses, required=True),
         "Cierre Medidas Correctivas (%)": st.column_config.ProgressColumn("Cierre Medidas", min_value=0, max_value=100, format="%f%%"),
