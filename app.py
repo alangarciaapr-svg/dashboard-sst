@@ -1,116 +1,76 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
-import io
+import os
 
-# --- 1. CONFIGURACIÓN INICIAL DE LA APP ---
-st.set_page_config(
-    page_title="Sistema de Gestión SST",
-    layout="wide",
-    page_icon="🛡️",
-    initial_sidebar_state="expanded"
-)
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="SST Chile - Mutualidades", layout="wide", page_icon="🇨🇱")
 
-# --- 2. GESTIÓN DE ESTADO (MEMORIA TEMPORAL) ---
-# Inicializamos la base de datos vacía si no existe
-if 'df_sst' not in st.session_state:
-    # Estructura PROFESIONAL de datos para Prevención de Riesgos
-    data_structure = {
-        'Fecha': [datetime.today().date()],
-        'Mes': ['Enero'],
+# --- 2. SISTEMA DE AUTO-GUARDADO (PERSISTENCIA) ---
+CSV_FILE = "base_datos_sst.csv"
+
+def cargar_datos():
+    """Carga los datos del archivo CSV si existe, sino crea la estructura base."""
+    if os.path.exists(CSV_FILE):
+        try:
+            return pd.read_csv(CSV_FILE)
+        except:
+            pass # Si falla, creamos uno nuevo
+    
+    # ESTRUCTURA DE DATOS SEGÚN MUTUALIDADES (DS 67 / DS 40)
+    # Masa Laboral: Promedio de trabajadores en el mes.
+    # CTP: Con Tiempo Perdido (Licencias).
+    # Dias Cargo: Penalización por invalidez o muerte (DS 40).
+    return pd.DataFrame({
         'Año': [2024],
-        'Dotación (Trabajadores)': [100],
-        'Horas Hombre (HHT)': [18000],
-        'Accidentes CTP': [0], # Con Tiempo Perdido
-        'Accidentes STP': [0], # Sin Tiempo Perdido
-        'Días Perdidos': [0],
-        'Actos Inseguros': [0],
-        'Condiciones Inseguras': [0],
-        'Insp. Programadas': [10],
-        'Insp. Ejecutadas': [10],
-        'Cap. Programadas': [5],
-        'Cap. Ejecutadas': [5]
+        'Mes': ['Enero'],
+        'Masa Laboral (Trabajadores)': [100],
+        'HHT (Horas Hombre)': [18000],
+        'Accidentes CTP': [0],
+        'Accidentes Trayecto': [0],
+        'Días Perdidos (Licencias)': [0],
+        'Días Cargo (Inv/Muerte)': [0]
+    })
+
+def guardar_cambios(df):
+    """Escribe los datos en el disco duro inmediatamente."""
+    df.to_csv(CSV_FILE, index=False)
+
+# Cargar datos al inicio
+if 'df_sst' not in st.session_state:
+    st.session_state['df_sst'] = cargar_datos()
+
+# --- 3. ESTILOS VISUALES (LIMPIO Y PROFESIONAL) ---
+st.markdown("""
+    <style>
+    .block-container { padding-top: 2rem; }
+    .kpi-card {
+        background-color: white; border-left: 5px solid #666;
+        padding: 15px; border-radius: 5px; box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
     }
-    st.session_state['df_sst'] = pd.DataFrame(data_structure)
-
-# --- 3. BARRA LATERAL (CONTROL) ---
-st.sidebar.title("🛡️ Panel de Control")
-st.sidebar.markdown("---")
-
-# Carga de respaldo (Para no perder datos al cerrar)
-uploaded_file = st.sidebar.file_uploader("📂 Cargar Respaldo (Excel/CSV)", type=["xlsx", "csv"])
-
-if uploaded_file:
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df_loaded = pd.read_csv(uploaded_file)
-        else:
-            df_loaded = pd.read_excel(uploaded_file)
-        
-        # Convertir columna Fecha a datetime para evitar errores
-        if 'Fecha' in df_loaded.columns:
-            df_loaded['Fecha'] = pd.to_datetime(df_loaded['Fecha']).dt.date
-            
-        st.session_state['df_sst'] = df_loaded
-        st.sidebar.success("✅ Datos cargados correctamente")
-    except Exception as e:
-        st.sidebar.error(f"Error al cargar: {e}")
-
-st.sidebar.markdown("### 💾 Guardar Avance")
-st.sidebar.info("⚠️ La app se reinicia si cierras la pestaña. Descarga tus datos regularmente.")
-
-# Botón de descarga universal
-def convert_df(df):
-    return df.to_csv(index=False).encode('utf-8')
-
-csv_data = convert_df(st.session_state['df_sst'])
-st.sidebar.download_button(
-    "📥 Descargar Base de Datos (CSV)",
-    csv_data,
-    "Respaldo_SST.csv",
-    "text/csv"
-)
-
-# --- 4. INTERFAZ PRINCIPAL (PESTAÑAS) ---
-st.title("🛡️ Dashboard Integral de Prevención de Riesgos")
-tab1, tab2 = st.tabs(["📝 INGRESO Y EDICIÓN DE DATOS", "📊 DASHBOARD Y REPORTES"])
-
-# ==========================================
-# PESTAÑA 1: EDITOR DE DATOS (TIPO EXCEL)
-# ==========================================
-with tab1:
-    st.subheader("Base de Datos Maestra")
-    st.markdown("Edita directamente las celdas, agrega filas al final o borra seleccionando la izquierda.")
+    .kpi-title { font-size: 14px; font-weight: bold; color: #555; text-transform: uppercase;}
+    .kpi-value { font-size: 28px; font-weight: bold; color: #222; }
+    .kpi-sub { font-size: 12px; color: #888; font-style: italic; }
     
-    # EL CORAZÓN DE LA APP: st.data_editor
-    # Esto permite editar la tabla como si fuera un Excel
-    edited_df = st.data_editor(
-        st.session_state['df_sst'],
-        num_rows="dynamic", # Permite agregar/borrar filas
-        use_container_width=True,
-        column_config={
-            "Fecha": st.column_config.DateColumn("Fecha de Cierre", format="DD/MM/YYYY"),
-            "Horas Hombre (HHT)": st.column_config.NumberColumn("HHT", help="Horas Hombre Trabajadas Totales"),
-            "Accidentes CTP": st.column_config.NumberColumn("Acc. CTP", help="Con Tiempo Perdido"),
-            "Accidentes STP": st.column_config.NumberColumn("Acc. STP", help="Sin Tiempo Perdido"),
-        },
-        key="editor_sst" # Clave única
-    )
-    
-    # Actualizar la sesión con los cambios
-    st.session_state['df_sst'] = edited_df
-    
-    # Métricas rápidas de la base de datos
-    st.caption(f"Registros totales: {len(edited_df)} | Última actualización: {datetime.now().strftime('%H:%M:%S')}")
+    /* Colores Específicos Prevención */
+    .border-red { border-left-color: #D32F2F !important; }
+    .border-orange { border-left-color: #F57C00 !important; }
+    .border-blue { border-left-color: #1976D2 !important; }
+    </style>
+""", unsafe_allow_html=True)
 
-# ==========================================
-# PESTAÑA 2: DASHBOARD (VISUALIZACIÓN)
-# ==========================================
-with tab2:
-    # 1. Preparación de Datos
-    df = st.session_state['df_sst'].copy()
+# --- 4. INTERFAZ PRINCIPAL ---
+st.title("🛡️ Panel de Control SST - Normativa Chilena")
+st.markdown("Cálculos basados en **D.S. 67** (Siniestralidad Efectiva) y **D.S. 40** (Estadísticas Mensuales).")
+
+tab_dashboard, tab_editor = st.tabs(["📊 DASHBOARD DE INDICADORES", "📝 PLANILLA DE DATOS (EDITABLE)"])
+
+# ==============================================================================
+# PESTAÑA 1: DASHBOARD (CÁLCULOS AUTOMÁTICOS MUTUALIDAD)
+# ==============================================================================
+with tab_dashboard:
+    df = st.session_state['df_sst']
     
     # Filtros
     col_f1, col_f2 = st.columns(2)
@@ -118,88 +78,122 @@ with tab2:
         years = sorted(df['Año'].unique(), reverse=True)
         sel_year = st.selectbox("Seleccionar Año", years)
     
-    # Filtrar DF
-    df_filtered = df[df['Año'] == sel_year]
+    # Filtrar por año
+    df_year = df[df['Año'] == sel_year]
     
-    if df_filtered.empty:
-        st.warning("No hay datos para el año seleccionado.")
-        st.stop()
-
-    # 2. CÁLCULO DE ÍNDICES NORMATIVOS (Standard OSHA / ISO / Local)
-    # IF = (Accidentes CTP * 1.000.000) / HHT
-    # IS = (Días Perdidos * 1.000.000) / HHT
+    # LÓGICA DE CÁLCULO ACUMULADO (AÑO A LA FECHA)
+    masa_total = df_year['Masa Laboral (Trabajadores)'].mean() # El promedio anual
+    hht_total = df_year['HHT (Horas Hombre)'].sum()
+    acc_ctp_total = df_year['Accidentes CTP'].sum()
+    dias_perdidos_total = df_year['Días Perdidos (Licencias)'].sum()
+    dias_cargo_total = df_year['Días Cargo (Inv/Muerte)'].sum()
     
-    total_acc_ctp = df_filtered['Accidentes CTP'].sum()
-    total_dias = df_filtered['Días Perdidos'].sum()
-    total_hht = df_filtered['Horas Hombre (HHT)'].sum()
+    # --- FÓRMULAS CHILENAS (EXPLICADAS) ---
     
-    if total_hht > 0:
-        if_anual = (total_acc_ctp * 1000000) / total_hht
-        is_anual = (total_dias * 1000000) / total_hht
+    # 1. TASA DE ACCIDENTABILIDAD (DS 40 / Mutual)
+    # Fórmula: (Total Accidentes / Promedio Trabajadores) * 100
+    if masa_total > 0:
+        tasa_acc = (acc_ctp_total / masa_total) * 100
+        tasa_sin = (dias_perdidos_total / masa_total) * 100 # Tasa Siniestralidad DS67 (Aprox Mensual)
     else:
-        if_anual = 0
-        is_anual = 0
+        tasa_acc = 0
+        tasa_sin = 0
+        
+    # 2. ÍNDICES TÉCNICOS (Base 1.000.000 HHT)
+    if hht_total > 0:
+        ind_frec = (acc_ctp_total * 1000000) / hht_total
+        # Para gravedad sumamos días perdidos + días cargo (Norma ANSI utilizada en Chile)
+        ind_grav = ((dias_perdidos_total + dias_cargo_total) * 1000000) / hht_total
+    else:
+        ind_frec = 0
+        ind_grav = 0
 
-    # 3. KPIs PRINCIPALES (Header)
-    st.markdown("### 📈 Indicadores Globales (Acumulado Anual)")
+    # VISUALIZACIÓN DE KPIs
+    st.markdown("### 📌 Indicadores Acumulados (Año en Curso)")
+    
     k1, k2, k3, k4 = st.columns(4)
     
-    k1.metric("Accidentes CTP", int(total_acc_ctp), delta="Eventos Críticos", delta_color="inverse")
-    k2.metric("Días Perdidos", int(total_dias), delta="Severidad", delta_color="inverse")
-    k3.metric("Índice Frecuencia (IF)", f"{if_anual:.2f}", help="Accidentes CTP por millón de horas")
-    k4.metric("Índice Severidad (IS)", f"{is_anual:.2f}", help="Días perdidos por millón de horas")
+    def kpi_card(col, title, value, sub, color):
+        col.markdown(f"""
+        <div class="kpi-card {color}">
+            <div class="kpi-title">{title}</div>
+            <div class="kpi-value">{value}</div>
+            <div class="kpi-sub">{sub}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    kpi_card(k1, "TASA ACCIDENTABILIDAD", f"{tasa_acc:.2f}%", "Acc. CTP / Masa Promedio", "border-red")
+    kpi_card(k2, "TASA SINIESTRALIDAD", f"{tasa_sin:.2f}", "Días / Masa Promedio", "border-orange")
+    kpi_card(k3, "ÍNDICE FRECUENCIA", f"{ind_frec:.2f}", "Acc. CTP x 1M / HHT", "border-blue")
+    kpi_card(k4, "ÍNDICE GRAVEDAD", f"{ind_grav:.0f}", "Días Totales x 1M / HHT", "border-blue")
     
     st.markdown("---")
-
-    # 4. GRÁFICOS DE GESTIÓN
-    row1_1, row1_2 = st.columns(2)
     
-    with row1_1:
-        st.subheader("📊 Cumplimiento de Programa (Preventivo)")
-        # Sumas para gráficos
-        insp_prog = df_filtered['Insp. Programadas'].sum()
-        insp_ejec = df_filtered['Insp. Ejecutadas'].sum()
-        cap_prog = df_filtered['Cap. Programadas'].sum()
-        cap_ejec = df_filtered['Cap. Ejecutadas'].sum()
+    # GRÁFICOS
+    g1, g2 = st.columns(2)
+    
+    with g1:
+        st.subheader("📉 Curva de Tasas Mensuales")
+        # Calculamos tasa mes a mes para el gráfico
+        df_year['Tasa_Acc_Mes'] = (df_year['Accidentes CTP'] / df_year['Masa Laboral (Trabajadores)']) * 100
         
-        # Calcular %
-        perc_insp = (insp_ejec / insp_prog * 100) if insp_prog > 0 else 0
-        perc_cap = (cap_ejec / cap_prog * 100) if cap_prog > 0 else 0
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_year['Mes'], y=df_year['Tasa_Acc_Mes'], 
+                                mode='lines+markers', name='Tasa Accidentabilidad',
+                                line=dict(color='#D32F2F', width=3)))
+        fig.add_trace(go.Bar(x=df_year['Mes'], y=df_year['Accidentes CTP'], 
+                             name='Nº Accidentes', opacity=0.3, yaxis='y2'))
         
-        fig_cumplimiento = go.Figure(data=[
-            go.Bar(name='Programado', x=['Inspecciones', 'Capacitaciones'], y=[insp_prog, cap_prog], marker_color='#E0E0E0'),
-            go.Bar(name='Ejecutado', x=['Inspecciones', 'Capacitaciones'], y=[insp_ejec, cap_ejec], marker_color='#00B050')
-        ])
-        fig_cumplimiento.update_layout(title=f"Cumplimiento: Insp ({perc_insp:.0f}%) | Cap ({perc_cap:.0f}%)")
-        st.plotly_chart(fig_cumplimiento, use_container_width=True)
+        fig.update_layout(yaxis=dict(title='Tasa (%)'),
+                          yaxis2=dict(title='Nº Eventos', overlaying='y', side='right'),
+                          legend=dict(orientation="h", y=1.1))
+        st.plotly_chart(fig, use_container_width=True)
 
-    with row1_2:
-        st.subheader("⚠️ Hallazgos: Actos vs Condiciones")
-        # Datos mensuales para línea de tendencia
-        # Agrupamos por Mes para asegurar orden
-        fig_trend = go.Figure()
-        fig_trend.add_trace(go.Scatter(x=df_filtered['Mes'], y=df_filtered['Actos Inseguros'], name='Actos', line=dict(color='#FFC000', width=3)))
-        fig_trend.add_trace(go.Scatter(x=df_filtered['Mes'], y=df_filtered['Condiciones Inseguras'], name='Condiciones', line=dict(color='#002060', width=3)))
-        fig_trend.update_layout(title="Tendencia de Hallazgos")
-        st.plotly_chart(fig_trend, use_container_width=True)
+    with g2:
+        st.subheader("🚑 Composición de la Siniestralidad")
+        values = [dias_perdidos_total, dias_cargo_total]
+        labels = ['Días Licencias Médicas', 'Días Cargo (Inv/Muerte)']
+        
+        if sum(values) > 0:
+            fig2 = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.4, 
+                                        marker_colors=['#F57C00', '#333333'])])
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            st.info("Sin días perdidos registrados en el periodo.")
 
-    # 5. ANÁLISIS MENSUAL DETALLADO
-    st.markdown("---")
-    st.subheader("🔍 Detalle Mensual de Índices")
+# ==============================================================================
+# PESTAÑA 2: EDITOR (EL CAMBIO CLAVE)
+# ==============================================================================
+with tab_editor:
+    st.subheader("📝 Ingreso y Modificación de Datos")
+    st.info("💡 **Auto-Guardado Activo:** Cualquier cambio que hagas aquí se guarda en el archivo 'base_datos_sst.csv' automáticamente. Puedes refrescar la página y tus datos seguirán aquí.")
     
-    # Calcular IF e IS por mes para graficar
-    df_filtered['IF_Mes'] = (df_filtered['Accidentes CTP'] * 1000000) / df_filtered['Horas Hombre (HHT)']
-    df_filtered['IS_Mes'] = (df_filtered['Días Perdidos'] * 1000000) / df_filtered['Horas Hombre (HHT)']
-    # Limpiar divisiones por cero
-    df_filtered = df_filtered.fillna(0)
+    # Configuración de columnas para que se vea profesional
+    column_config = {
+        "Mes": st.column_config.SelectboxColumn(
+            "Mes", options=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'], required=True
+        ),
+        "Masa Laboral (Trabajadores)": st.column_config.NumberColumn("Masa Laboral", help="Promedio de trabajadores contratados en el mes", min_value=1),
+        "HHT (Horas Hombre)": st.column_config.NumberColumn("HHT", help="Total horas trabajadas (aprox Masa * 45 * 4)", min_value=0),
+        "Accidentes CTP": st.column_config.NumberColumn("Acc. CTP", help="Accidentes del Trabajo Con Tiempo Perdido"),
+        "Accidentes Trayecto": st.column_config.NumberColumn("Trayecto", help="No se suman a la Tasa de Accidentabilidad, pero se llevan por control"),
+        "Días Cargo (Inv/Muerte)": st.column_config.NumberColumn("Días Cargo", help="6000 por Muerte, 4500 ITP, etc.")
+    }
 
-    fig_indices = go.Figure()
-    fig_indices.add_trace(go.Bar(x=df_filtered['Mes'], y=df_filtered['IF_Mes'], name='Indice Frecuencia', marker_color='#5B9BD5'))
-    fig_indices.add_trace(go.Scatter(x=df_filtered['Mes'], y=df_filtered['IS_Mes'], name='Indice Severidad (Línea)', yaxis='y2', line=dict(color='red')))
-    
-    fig_indices.update_layout(
-        title="Evolución IF vs IS",
-        yaxis=dict(title="Frecuencia"),
-        yaxis2=dict(title="Severidad", overlaying='y', side='right')
+    # EDITOR DE DATOS
+    edited_df = st.data_editor(
+        st.session_state['df_sst'],
+        num_rows="dynamic",
+        column_config=column_config,
+        use_container_width=True,
+        key="editor_principal"
     )
-    st.plotly_chart(fig_indices, use_container_width=True)
+
+    # LÓGICA DE GUARDADO AUTOMÁTICO
+    # Comparamos si el editado es diferente al guardado en sesión
+    # Si es diferente, actualizamos sesión y GUARDAMOS EN DISCO
+    if not edited_df.equals(st.session_state['df_sst']):
+        st.session_state['df_sst'] = edited_df
+        guardar_cambios(edited_df)
+        st.toast("✅ Datos guardados en disco exitosamente", icon="💾")
+        st.rerun() # Recargamos para refrescar gráficos
