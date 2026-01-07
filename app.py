@@ -9,14 +9,14 @@ from fpdf import FPDF
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v7.csv"
+CSV_FILE = "base_datos_galvez_v8.csv"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
-def get_structure(year=2026):
+def get_structure(year):
     data = []
     for m in MESES_ORDEN:
         data.append({
-            'Año': year, 'Mes': m,
+            'Año': int(year), 'Mes': m,
             'Masa Laboral': 100.0, 'Horas Extras': 0.0, 'Horas Ausentismo': 0.0,
             'Accidentes CTP': 0.0, 'Días Perdidos': 0.0, 'Días Cargo': 0.0,
             'Insp. Programadas': 10.0, 'Insp. Ejecutadas': 8.0,
@@ -33,6 +33,9 @@ def procesar_datos(df):
     cols_num = df.columns.drop(['Año', 'Mes', 'Observaciones'])
     for col in cols_num:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    # Asegurar año como entero
+    df['Año'] = df['Año'].astype(int)
     
     if 'Observaciones' not in df.columns: df['Observaciones'] = ""
 
@@ -51,15 +54,17 @@ def load_data():
     if os.path.exists(CSV_FILE):
         try:
             df = pd.read_csv(CSV_FILE)
-            ref = get_structure()
-            # Reparar columnas faltantes
+            # Si el archivo está vacío o corrupto
+            if df.empty: return get_structure(2026)
+            
+            ref = get_structure(2026)
             for col in ref.columns:
                 if col not in df.columns: 
                     if col == 'Observaciones': df[col] = ""
                     else: df[col] = 0
             return procesar_datos(df)
-        except: return get_structure()
-    return get_structure()
+        except: return get_structure(2026)
+    return get_structure(2026)
 
 def save_data(df):
     df_calc = procesar_datos(df)
@@ -101,17 +106,21 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 📅 Gestión de Años")
-    new_year_input = st.number_input("Crear Nuevo Año Fiscal", min_value=2024, max_value=2030, value=2027)
-    if st.button("➕ Generar Meses para este Año"):
-        # Verificar si ya existe para no duplicar
+    st.info("Para trabajar con un año nuevo o antiguo, créalo aquí primero.")
+    
+    # RANGO AMPLIADO: 2000 a 2050
+    new_year_input = st.number_input("Año a Gestionar", min_value=2000, max_value=2050, value=2026)
+    
+    if st.button("➕ Crear/Cargar Año"):
+        # Verificar si ya existe
         exists = not st.session_state['df_main'][st.session_state['df_main']['Año'] == new_year_input].empty
         if exists:
-            st.warning(f"El año {new_year_input} ya existe en la base de datos.")
+            st.warning(f"El año {new_year_input} ya existe. Puedes seleccionarlo en el Dashboard.")
         else:
             df_new = get_structure(new_year_input)
             st.session_state['df_main'] = pd.concat([st.session_state['df_main'], df_new], ignore_index=True)
             st.session_state['df_main'] = save_data(st.session_state['df_main'])
-            st.success(f"Año {new_year_input} creado exitosamente.")
+            st.success(f"Año {new_year_input} habilitado exitosamente.")
             st.rerun()
 
     if st.button("♻️ Resetear Base de Datos"):
@@ -158,7 +167,8 @@ tab_dash, tab_editor = st.tabs(["📊 DASHBOARD INTELIGENTE", "📝 CARGA DE DAT
 
 # --- LÓGICA DE ORDENAMIENTO GLOBAL ---
 years = sorted(df['Año'].unique(), reverse=True)
-curr_year = years[0] if len(years)>0 else 2026
+# Fallback si no hay años
+if not years: years = [2026]
 
 with tab_dash:
     c1, c2 = st.columns([1, 4])
@@ -178,7 +188,7 @@ with tab_dash:
     months_avail = df_year['Mes'].tolist()
     
     if not months_avail:
-        st.warning("No hay meses registrados para este año. Ve a 'Carga de Datos' para crearlos.")
+        st.warning("Año sin meses generados. Use la barra lateral para crearlos.")
         st.stop()
 
     sel_month = col_m.selectbox("Mes de Cierre", months_avail, index=len(months_avail)-1 if months_avail else 0)
@@ -291,90 +301,80 @@ with tab_editor:
     st.subheader("📝 Carga de Datos y Observaciones")
     
     # 1. SELECCIÓN ROBUSTA DE REGISTRO
-    # Obtenemos los años disponibles en la base de datos
-    available_years = sorted(df['Año'].unique(), reverse=True)
+    # Usamos los mismos años disponibles que en el dashboard
+    years_edit = sorted(df['Año'].unique(), reverse=True)
     
-    col_sel_y, col_sel_m = st.columns(2)
-    edit_year_val = col_sel_y.selectbox("Seleccionar Año:", available_years, key="edit_year_sel")
-    
-    # Filtramos meses para ese año
-    months_for_year = df[df['Año'] == edit_year_val]['Mes'].tolist()
-    # Los ordenamos lógicamente
-    months_for_year.sort(key=lambda x: MESES_ORDEN.index(x) if x in MESES_ORDEN else 99)
-    
-    edit_month_val = col_sel_m.selectbox("Seleccionar Mes:", months_for_year, key="edit_month_sel")
-
-    # Encontramos el índice exacto
-    try:
-        row_idx = df.index[(df['Año'] == edit_year_val) & (df['Mes'] == edit_month_val)].tolist()[0]
+    if not years_edit:
+        st.error("Base de datos vacía. Crea un año en la barra lateral.")
+    else:
+        col_sel_y, col_sel_m = st.columns(2)
+        edit_year_val = col_sel_y.selectbox("Seleccionar Año a Editar:", years_edit, key="edit_year_sel")
         
-        with st.form("edit_form"):
-            st.info(f"Editando registro: **{edit_month_val} {edit_year_val}**")
-            
-            # NOTA: Permitir cambiar el año aquí es peligroso si se duplica.
-            # Mejor opción: Solo permitir editar datos. Para cambiar año, usar migración o crear nuevo.
-            # Si el usuario insiste en cambiar año, agregamos validación.
-            
-            new_year_val = st.number_input("Año del Registro (Cuidado al cambiar)", value=int(df.at[row_idx, 'Año']), min_value=2020, max_value=2030)
-            
-            col_e1, col_e2, col_e3 = st.columns(3)
-            with col_e1:
-                st.markdown("##### 👷 Datos Laborales")
-                val_masa = st.number_input("Masa Laboral", value=float(df.at[row_idx, 'Masa Laboral']))
-                val_extras = st.number_input("Horas Extras", value=float(df.at[row_idx, 'Horas Extras']))
-                val_aus = st.number_input("Horas Ausentismo", value=float(df.at[row_idx, 'Horas Ausentismo']))
-            with col_e2:
-                st.markdown("##### 🚑 Siniestralidad")
-                val_acc = st.number_input("Accidentes CTP", value=float(df.at[row_idx, 'Accidentes CTP']))
-                val_dias = st.number_input("Días Perdidos", value=float(df.at[row_idx, 'Días Perdidos']))
-                val_cargo = st.number_input("Días Cargo", value=float(df.at[row_idx, 'Días Cargo']))
-            with col_e3:
-                st.markdown("##### 📋 Gestión")
-                val_insp_p = st.number_input("Insp. Programadas", value=float(df.at[row_idx, 'Insp. Programadas']))
-                val_insp_e = st.number_input("Insp. Ejecutadas", value=float(df.at[row_idx, 'Insp. Ejecutadas']))
-                val_cap_p = st.number_input("Cap. Programadas", value=float(df.at[row_idx, 'Cap. Programadas']))
-                val_cap_e = st.number_input("Cap. Ejecutadas", value=float(df.at[row_idx, 'Cap. Ejecutadas']))
-                val_med_ab = st.number_input("Medidas Abiertas", value=float(df.at[row_idx, 'Medidas Abiertas']))
-                val_med_ce = st.number_input("Medidas Cerradas", value=float(df.at[row_idx, 'Medidas Cerradas']))
-                val_exp = st.number_input("Expuestos Silice/Ruido", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
-                val_vig = st.number_input("Vigilancia Vigente", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
+        # Filtramos meses para ese año
+        months_for_year = df[df['Año'] == edit_year_val]['Mes'].tolist()
+        
+        if not months_for_year:
+            st.error(f"No hay meses creados para el año {edit_year_val}.")
+        else:
+            # Ordenar
+            months_for_year.sort(key=lambda x: MESES_ORDEN.index(x) if x in MESES_ORDEN else 99)
+            edit_month_val = col_sel_m.selectbox("Seleccionar Mes a Editar:", months_for_year, key="edit_month_sel")
 
-            st.markdown("##### 📝 Observaciones")
-            curr_obs = df.at[row_idx, 'Observaciones']
-            if pd.isna(curr_obs) or curr_obs == 0: curr_obs = ""
-            val_obs = st.text_area("Texto del Reporte:", value=str(curr_obs), height=100)
-
-            if st.form_submit_button("💾 GUARDAR CAMBIOS"):
-                # VALIDACIÓN DUPLICADOS SI CAMBIA AÑO
-                current_year = df.at[row_idx, 'Año']
-                if new_year_val != current_year:
-                    # Chequear si ya existe el mes en el nuevo año
-                    duplicate = not df[(df['Año'] == new_year_val) & (df['Mes'] == edit_month_val)].empty
-                    if duplicate:
-                        st.error(f"Error: Ya existe un registro para {edit_month_val} en el año {new_year_val}. No se puede duplicar.")
-                        st.stop()
-                    else:
-                        df.at[row_idx, 'Año'] = new_year_val
-
-                df.at[row_idx, 'Masa Laboral'] = val_masa
-                df.at[row_idx, 'Horas Extras'] = val_extras
-                df.at[row_idx, 'Horas Ausentismo'] = val_aus
-                df.at[row_idx, 'Accidentes CTP'] = val_acc
-                df.at[row_idx, 'Días Perdidos'] = val_dias
-                df.at[row_idx, 'Días Cargo'] = val_cargo
-                df.at[row_idx, 'Insp. Programadas'] = val_insp_p
-                df.at[row_idx, 'Insp. Ejecutadas'] = val_insp_e
-                df.at[row_idx, 'Cap. Programadas'] = val_cap_p
-                df.at[row_idx, 'Cap. Ejecutadas'] = val_cap_e
-                df.at[row_idx, 'Medidas Abiertas'] = val_med_ab
-                df.at[row_idx, 'Medidas Cerradas'] = val_med_ce
-                df.at[row_idx, 'Expuestos Silice/Ruido'] = val_exp
-                df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
-                df.at[row_idx, 'Observaciones'] = val_obs
+            # Encontramos el índice exacto
+            try:
+                row_idx = df.index[(df['Año'] == edit_year_val) & (df['Mes'] == edit_month_val)].tolist()[0]
                 
-                st.session_state['df_main'] = save_data(df)
-                st.success("Registro actualizado exitosamente.")
-                st.rerun()
-    
-    except IndexError:
-        st.error("Error al cargar el registro. Intente resetear la base de datos.")
+                with st.form("edit_form"):
+                    # SE ELIMINÓ EL CAMPO DE EDITAR AÑO PARA EVITAR DUPLICADOS
+                    st.info(f"Modificando registro: **{edit_month_val} del {edit_year_val}**")
+                    
+                    col_e1, col_e2, col_e3 = st.columns(3)
+                    with col_e1:
+                        st.markdown("##### 👷 Datos Laborales")
+                        val_masa = st.number_input("Masa Laboral", value=float(df.at[row_idx, 'Masa Laboral']))
+                        val_extras = st.number_input("Horas Extras", value=float(df.at[row_idx, 'Horas Extras']))
+                        val_aus = st.number_input("Horas Ausentismo", value=float(df.at[row_idx, 'Horas Ausentismo']))
+                    with col_e2:
+                        st.markdown("##### 🚑 Siniestralidad")
+                        val_acc = st.number_input("Accidentes CTP", value=float(df.at[row_idx, 'Accidentes CTP']))
+                        val_dias = st.number_input("Días Perdidos", value=float(df.at[row_idx, 'Días Perdidos']))
+                        val_cargo = st.number_input("Días Cargo", value=float(df.at[row_idx, 'Días Cargo']))
+                    with col_e3:
+                        st.markdown("##### 📋 Gestión")
+                        val_insp_p = st.number_input("Insp. Programadas", value=float(df.at[row_idx, 'Insp. Programadas']))
+                        val_insp_e = st.number_input("Insp. Ejecutadas", value=float(df.at[row_idx, 'Insp. Ejecutadas']))
+                        val_cap_p = st.number_input("Cap. Programadas", value=float(df.at[row_idx, 'Cap. Programadas']))
+                        val_cap_e = st.number_input("Cap. Ejecutadas", value=float(df.at[row_idx, 'Cap. Ejecutadas']))
+                        val_med_ab = st.number_input("Medidas Abiertas", value=float(df.at[row_idx, 'Medidas Abiertas']))
+                        val_med_ce = st.number_input("Medidas Cerradas", value=float(df.at[row_idx, 'Medidas Cerradas']))
+                        val_exp = st.number_input("Expuestos Silice/Ruido", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
+                        val_vig = st.number_input("Vigilancia Vigente", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
+
+                    st.markdown("##### 📝 Observaciones")
+                    curr_obs = df.at[row_idx, 'Observaciones']
+                    if pd.isna(curr_obs) or curr_obs == 0: curr_obs = ""
+                    val_obs = st.text_area("Texto del Reporte:", value=str(curr_obs), height=100)
+
+                    if st.form_submit_button("💾 GUARDAR CAMBIOS"):
+                        df.at[row_idx, 'Masa Laboral'] = val_masa
+                        df.at[row_idx, 'Horas Extras'] = val_extras
+                        df.at[row_idx, 'Horas Ausentismo'] = val_aus
+                        df.at[row_idx, 'Accidentes CTP'] = val_acc
+                        df.at[row_idx, 'Días Perdidos'] = val_dias
+                        df.at[row_idx, 'Días Cargo'] = val_cargo
+                        df.at[row_idx, 'Insp. Programadas'] = val_insp_p
+                        df.at[row_idx, 'Insp. Ejecutadas'] = val_insp_e
+                        df.at[row_idx, 'Cap. Programadas'] = val_cap_p
+                        df.at[row_idx, 'Cap. Ejecutadas'] = val_cap_e
+                        df.at[row_idx, 'Medidas Abiertas'] = val_med_ab
+                        df.at[row_idx, 'Medidas Cerradas'] = val_med_ce
+                        df.at[row_idx, 'Expuestos Silice/Ruido'] = val_exp
+                        df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
+                        df.at[row_idx, 'Observaciones'] = val_obs
+                        
+                        st.session_state['df_main'] = save_data(df)
+                        st.success("Registro actualizado exitosamente.")
+                        st.rerun()
+            
+            except IndexError:
+                st.error("Error cargando el registro. Intente resetear la base de datos.")
