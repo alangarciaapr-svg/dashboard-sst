@@ -11,22 +11,22 @@ import matplotlib
 import tempfile
 import numpy as np
 
-# Configuración Matplotlib para servidor
+# Configuración Matplotlib
 matplotlib.use('Agg')
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v18.csv"
+CSV_FILE = "base_datos_galvez_v19.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
-# --- COLORES CORPORATIVOS ---
-COLOR_PRIMARY = (183, 28, 28) # Rojo Oscuro
-COLOR_SECONDARY = (50, 50, 50) # Gris Oscuro
-COLOR_GREEN = (46, 125, 50) # Verde Éxito
-COLOR_RED = (198, 40, 40) # Rojo Alerta
+# COLORES
+COLOR_PRIMARY = (183, 28, 28)
+COLOR_SECONDARY = (50, 50, 50)
+COLOR_GREEN = (46, 125, 50)
+COLOR_RED = (198, 40, 40)
 
 def get_structure_for_year(year):
     data = []
@@ -159,7 +159,7 @@ with st.sidebar:
     meta_gestion = st.slider("Meta Gestión (%)", 50, 100, 90)
     metas = {'meta_ta': meta_ta, 'meta_gestion': meta_gestion}
 
-# --- 4. MOTOR PDF EJECUTIVO LEGAL ---
+# --- 4. MOTOR PDF EJECUTIVO ---
 class PDF_SST(FPDF):
     def header(self):
         self.set_fill_color(245, 245, 245)
@@ -190,8 +190,9 @@ class PDF_SST(FPDF):
     def section_title(self, title):
         self.set_font('Arial', 'B', 12)
         self.set_fill_color(*COLOR_SECONDARY)
-        self.set_text_color(255, 255, 255)
+        self.set_text_color(255, 255, 255) # ESTO PONE LA TINTA EN BLANCO
         self.cell(0, 8, f"  {title}", 0, 1, 'L', 1)
+        self.set_text_color(0, 0, 0) # BUGFIX: RESTAURAR TINTA NEGRA
         self.ln(4)
 
     def kpi_card_color(self, label, value, unit, x, y, w, h, is_good):
@@ -216,6 +217,7 @@ class PDF_SST(FPDF):
         self.set_xy(x+2, y+20)
         self.set_font('Arial', '', 7)
         self.cell(w-5, 4, unit, 0, 1, 'C')
+        self.set_text_color(0, 0, 0) # Reset
 
     def draw_trend_chart(self, df_hist, x, y, w, h):
         try:
@@ -256,24 +258,23 @@ class PDF_SST(FPDF):
         return text.encode('latin-1', 'replace').decode('latin-1')
 
     def footer_signatures(self):
-        # Bloque de Firmas Legal (Doble)
         y_pos = self.get_y() + 10
-        if y_pos > 250: # Si estamos muy abajo, nueva pagina
+        if y_pos > 250:
             self.add_page()
             y_pos = self.get_y() + 20
-        
         self.set_y(y_pos)
         
-        # Firma Izquierda (Gerente)
+        # Firma Gerente
         self.line(20, y_pos, 90, y_pos)
         self.set_xy(20, y_pos + 2)
         self.set_font('Arial', 'B', 9)
+        self.set_text_color(0, 0, 0) # Asegurar Negro
         self.cell(70, 5, "RODRIGO GALVEZ REBOLLEDO", 0, 1, 'C')
         self.set_xy(20, y_pos + 7)
         self.set_font('Arial', '', 8)
         self.cell(70, 5, "Gerente General / Rep. Legal", 0, 1, 'C')
         
-        # Firma Derecha (Experto)
+        # Firma Experto
         self.line(120, y_pos, 190, y_pos)
         self.set_xy(120, y_pos + 2)
         self.set_font('Arial', 'B', 9)
@@ -282,11 +283,10 @@ class PDF_SST(FPDF):
         self.set_font('Arial', '', 8)
         self.cell(70, 5, "Ingeniero en Prevención de Riesgos", 0, 1, 'C')
         
-        # Disclaimer Legal
         self.ln(15)
         self.set_font('Arial', 'I', 7)
         self.set_text_color(128)
-        self.multi_cell(0, 4, "Este documento es parte integrante del Sistema de Gestión de Seguridad y Salud en el Trabajo (SGSST) de Maderas Gálvez. Su contenido es confidencial y para uso exclusivo de la administración y organismos fiscalizadores.", 0, 'C')
+        self.multi_cell(0, 4, "Este documento es parte integrante del SGSST. Confidencial.", 0, 'C')
 
 # --- 5. DASHBOARD ---
 df = st.session_state['df_main']
@@ -413,18 +413,25 @@ with tab_dash:
                 x_pos = 15 + (i * 48)
                 color_hex = '#4CAF50' if val >= metas['meta_gestion'] else '#F44336'
                 pdf.draw_donut_chart_image(val, color_hex, x_pos, y_circles, size=30)
+                
+                # BUGFIX: Forzar color negro
+                pdf.set_text_color(0, 0, 0)
                 pdf.set_xy(x_pos - 5, y_circles + 32)
                 pdf.set_font('Arial', 'B', 8); pdf.cell(40, 4, label, 0, 1, 'C')
                 pdf.set_xy(x_pos - 5, y_circles + 36)
-                pdf.set_font('Arial', '', 7); pdf.set_text_color(100); pdf.cell(40, 4, txt, 0, 1, 'C'); pdf.set_text_color(0)
+                pdf.set_font('Arial', '', 7); pdf.set_text_color(100); pdf.cell(40, 4, txt, 0, 1, 'C')
+                pdf.set_text_color(0)
 
             # PÁGINA 2
             pdf.add_page()
             pdf.section_title("4. DETALLE ESTADÍSTICO MENSUAL")
             pdf.set_fill_color(230); pdf.set_font('Arial', 'B', 8)
+            pdf.set_text_color(0, 0, 0) # BUGFIX: Forzar negro
+            
             cols = [("MES", 25), ("M. LAB", 20), ("ACC", 15), ("DIAS P", 20), ("T. ACC", 20), ("T. SIN", 20), ("I. FREC", 20), ("I. GRAV", 20)]
             for c_name, c_w in cols: pdf.cell(c_w, 6, c_name, 1, 0, 'C', 1)
             pdf.ln()
+            
             pdf.set_font('Arial', '', 8)
             for _, r in df_acum.iterrows():
                 pdf.cell(25, 6, r['Mes'], 1)
@@ -440,6 +447,8 @@ with tab_dash:
             pdf.ln(10)
             pdf.section_title("5. OBSERVACIONES DEL EXPERTO")
             pdf.set_font('Arial', '', 10)
+            pdf.set_text_color(0, 0, 0) # BUGFIX
+            
             obs_raw = str(row_mes['Observaciones'])
             if obs_raw.lower() in ["nan", "none", "0", "0.0", ""]: obs_raw = "Sin observaciones registradas."
             clean_obs = pdf.clean_text(obs_raw)
