@@ -78,7 +78,7 @@ def procesar_datos(df):
         if masa <= 0 or hht <= 0: return 0, 0, 0, 0
         
         ta = (row['Accidentes CTP'] / masa) * 100
-        ts = (row['Días Perdidos'] / masa) * 100 # Tasa Siniestralidad Temporal
+        ts = (row['Días Perdidos'] / masa) * 100 
         if_ = (row['Accidentes CTP'] * 1000000) / hht
         ig = ((row['Días Perdidos'] + row['Días Cargo']) * 1000000) / hht
         return ta, ts, if_, ig
@@ -95,12 +95,23 @@ def load_data():
         try:
             df = pd.read_csv(CSV_FILE)
             if df.empty: return inicializar_db_completa()
-            # Reparar columnas si es version vieja
-            ref = get_structure_for_year(2026)
-            for col in ref.columns:
-                if col not in df.columns: 
-                    if col == 'Observaciones': df[col] = ""
-                    else: df[col] = 0
+            
+            # --- AUTO-REPARACIÓN DE ESTRUCTURA (SOLUCIÓN KEYERROR) ---
+            # Obtenemos la estructura perfecta nueva
+            ref_df = get_structure_for_year(2026)
+            required_cols = ref_df.columns
+            
+            # Si faltan columnas en el archivo viejo, las creamos con 0
+            for col in required_cols:
+                if col not in df.columns:
+                    if col == 'Observaciones':
+                        df[col] = ""
+                    else:
+                        df[col] = 0.0
+            
+            # Aseguramos el orden correcto de columnas
+            df = df[required_cols]
+            
             return procesar_datos(df)
         except: return inicializar_db_completa()
     return inicializar_db_completa()
@@ -259,6 +270,7 @@ class PDF_SST(FPDF):
             if is_bold: self.set_font('Arial', 'B', 9)
             else: self.set_font('Arial', '', 9)
             
+            self.ln()
             self.cell(100, 7, f" {label}", 1, 0, 'L')
             self.cell(45, 7, str(val_m), 1, 0, 'C')
             self.cell(45, 7, str(val_a), 1, 1, 'C')
@@ -314,8 +326,6 @@ with tab_dash:
     if_acum = (sum_acc * 1000000 / sum_hht) if sum_hht > 0 else 0
     
     # Factor Siniestralidad Inv/Muerte (Simulado con Días Cargo, lo usual para DS67)
-    # DS67 considera indemnizaciones y pensiones, pero el valor "Factor" suele ser numérico.
-    # Aquí sumaremos días cargo para el factor de gravedad.
     sum_dias_cargo = df_acum['Días Cargo'].sum()
     ig_acum = ((sum_dias_acc + sum_dias_cargo) * 1000000 / sum_hht) if sum_hht > 0 else 0
     
@@ -377,6 +387,7 @@ with tab_dash:
             
             # --- TABLA MAESTRA DE INDICADORES ---
             pdf.section_title("1. ESTADÍSTICA DE SINIESTRALIDAD (DS 67)")
+            pdf.ln(5)
             
             # Lista de datos (Etiqueta, Valor Mes, Valor Acumulado, EsTitulo?)
             table_rows = [
