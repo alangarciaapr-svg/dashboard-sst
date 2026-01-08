@@ -11,7 +11,7 @@ from io import BytesIO
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v13.csv"
+CSV_FILE = "base_datos_galvez_v14.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -55,7 +55,6 @@ def procesar_datos(df):
     df['Tasa Sin.'] = (df['Días Perdidos'] / masa) * 100
     df['Indice Frec.'] = (df['Accidentes CTP'] * 1000000) / df['HHT']
     df['Indice Grav.'] = ((df['Días Perdidos'] + df['Días Cargo']) * 1000000) / df['HHT']
-    
     return df
 
 def load_data():
@@ -212,7 +211,7 @@ with tab_dash:
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_dias = df_acum['Días Perdidos'].sum()
     sum_hht = df_acum['HHT'].sum()
-    # Promedio masa sin ceros
+    
     df_masa_ok = df_acum[df_acum['Masa Laboral'] > 0]
     avg_masa = df_masa_ok['Masa Laboral'].mean() if not df_masa_ok.empty else 0
 
@@ -232,10 +231,8 @@ with tab_dash:
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     
     # AUDITORÍA
-    with st.expander("🔍 Auditoría de Datos (Verificar Cálculos)"):
-        st.markdown(f"""
-        **Datos Mes:** Masa: {row_mes['Masa Laboral']} | HHT: {row_mes['HHT']} | Acc: {row_mes['Accidentes CTP']}
-        """)
+    with st.expander("🔍 Auditoría de Datos"):
+        st.markdown(f"**Datos Mes:** Masa: {row_mes['Masa Laboral']} | HHT: {row_mes['HHT']} | Acc: {row_mes['Accidentes CTP']}")
         st.dataframe(row_mes.to_frame().T)
 
     st.markdown("---")
@@ -254,4 +251,127 @@ with tab_dash:
     a4.metric("I. Grav. Acumulado", f"{ig_acum:.0f}")
 
     st.markdown("#### 📋 Gestión")
-    g1, g2, g3,
+    # --- AQUÍ ESTABA EL ERROR ANTERIOR ---
+    g1, g2, g3, g4 = st.columns(4) # Definición explicita de columnas antes de usarlas
+    
+    def donut(val, title, col_obj):
+        color = "#66BB6A" if val >= metas['meta_gestion'] else "#EF5350"
+        fig = go.Figure(go.Pie(values=[val, 100-val], hole=0.7, marker_colors=[color, '#eee'], textinfo='none'))
+        fig.update_layout(height=120, margin=dict(t=0,b=0,l=0,r=0), annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=16, showarrow=False)])
+        col_obj.markdown(f"<div style='text-align:center; font-size:13px;'>{title}</div>", unsafe_allow_html=True)
+        col_obj.plotly_chart(fig, use_container_width=True, key=title)
+
+    donut(p_insp, "Inspecciones", g1)
+    donut(p_cap, "Capacitaciones", g2)
+    donut(p_medidas, "Hallazgos", g3)
+    donut(p_salud, "Salud", g4)
+
+    st.markdown("---")
+    if st.button("📄 Generar Reporte PDF"):
+        try:
+            pdf = PDF_SST(orientation='P', format='A4')
+            pdf.add_page(); pdf.set_font('Arial', 'B', 12)
+            pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'L'); pdf.ln(2)
+            
+            pdf.section_title("1. INDICADORES RESULTADO")
+            pdf.set_fill_color(220); pdf.set_font('Arial', 'B', 9)
+            pdf.cell(70, 8, "INDICADOR", 1, 0, 'C', 1); pdf.cell(40, 8, "MES", 1, 0, 'C', 1)
+            pdf.cell(40, 8, "ACUMULADO", 1, 0, 'C', 1); pdf.cell(40, 8, "UNIDAD", 1, 1, 'C', 1)
+            
+            pdf.kpi_row("Tasa Accidentabilidad", row_mes['Tasa Acc.'], ta_acum, "%")
+            pdf.kpi_row("Tasa Siniestralidad", row_mes['Tasa Sin.'], ts_acum, "Dias/Trab")
+            pdf.kpi_row("Indice Frecuencia", row_mes['Indice Frec.'], if_acum, "Acc/1M HHT")
+            pdf.kpi_row("Total Accidentes CTP", row_mes['Accidentes CTP'], sum_acc, "N Eventos")
+            pdf.ln(5)
+            
+            pdf.section_title("2. GESTIÓN OPERATIVA")
+            data_gest = [("Inspecciones", p_insp), ("Capacitaciones", p_cap), ("Cierre Hallazgos", p_medidas), ("Salud Ocup.", p_salud)]
+            for l, v in data_gest:
+                pdf.cell(80, 8, l, 0); x=pdf.get_x(); y=pdf.get_y()
+                pdf.set_fill_color(230); pdf.rect(x, y+2, 80, 4, 'F')
+                pdf.set_fill_color(76, 175, 80) if v >= metas['meta_gestion'] else pdf.set_fill_color(244, 67, 54)
+                pdf.rect(x, y+2, (v/100)*80, 4, 'F')
+                pdf.set_x(x+85); pdf.cell(20, 8, f"{v:.0f}%", 0, 1)
+
+            pdf.ln(5); pdf.section_title("3. OBSERVACIONES")
+            pdf.set_font('Arial', '', 10); pdf.set_draw_color(100)
+            
+            clean_insight = pdf.clean_text(insight_text.replace("<b>","").replace("</b>","").replace("<br>","\n").replace("⚠️","").replace("✅","").replace("🚑",""))
+            obs_raw = str(row_mes['Observaciones'])
+            if obs_raw.lower() in ["nan", "none", "0", "0.0", ""]: obs_raw = "Sin observaciones registradas para este periodo."
+            clean_obs = pdf.clean_text(obs_raw)
+            
+            pdf.multi_cell(0, 6, f"ANALISIS SISTEMA:\n{clean_insight}\n\nCOMENTARIOS EXPERTO:\n{clean_obs}", 1, 'L')
+            
+            pdf.ln(15); pdf.line(110, pdf.get_y(), 190, pdf.get_y())
+            pdf.set_xy(110, pdf.get_y()+2); pdf.set_font('Arial', 'B', 8)
+            pdf.cell(80, 5, "Firma Experto", 0, 0, 'C')
+            
+            out = pdf.output(dest='S').encode('latin-1')
+            st.download_button("📥 Descargar", out, f"Reporte_{sel_month}_{sel_year}.pdf", "application/pdf")
+        except Exception as e:
+            st.error(f"Error al generar PDF: {e}")
+
+with tab_editor:
+    st.subheader("📝 Carga de Datos")
+    c_y, c_m = st.columns(2)
+    edit_year = c_y.selectbox("Año:", years, key="ed_y")
+    
+    m_list = df[df['Año'] == edit_year]['Mes'].tolist()
+    m_list.sort(key=lambda x: MESES_ORDEN.index(x) if x in MESES_ORDEN else 99)
+    edit_month = c_m.selectbox("Mes:", m_list, key="ed_m")
+    
+    try:
+        row_idx = df.index[(df['Año'] == edit_year) & (df['Mes'] == edit_month)].tolist()[0]
+        
+        with st.form("edit_form"):
+            st.info(f"Editando: **{edit_month} {edit_year}**")
+            col_e1, col_e2, col_e3 = st.columns(3)
+            with col_e1:
+                st.markdown("##### 👷 Datos")
+                val_masa = st.number_input("Masa Laboral", value=float(df.at[row_idx, 'Masa Laboral']))
+                val_extras = st.number_input("Horas Extras", value=float(df.at[row_idx, 'Horas Extras']))
+                val_aus = st.number_input("Horas Ausentismo", value=float(df.at[row_idx, 'Horas Ausentismo']))
+            with col_e2:
+                st.markdown("##### 🚑 Siniestralidad")
+                val_acc = st.number_input("Accidentes CTP", value=float(df.at[row_idx, 'Accidentes CTP']))
+                val_dias = st.number_input("Días Perdidos", value=float(df.at[row_idx, 'Días Perdidos']))
+                val_cargo = st.number_input("Días Cargo", value=float(df.at[row_idx, 'Días Cargo']))
+            with col_e3:
+                st.markdown("##### 📋 Gestión")
+                val_insp_p = st.number_input("Insp. Prog", value=float(df.at[row_idx, 'Insp. Programadas']))
+                val_insp_e = st.number_input("Insp. Ejec", value=float(df.at[row_idx, 'Insp. Ejecutadas']))
+                val_cap_p = st.number_input("Cap. Prog", value=float(df.at[row_idx, 'Cap. Programadas']))
+                val_cap_e = st.number_input("Cap. Ejec", value=float(df.at[row_idx, 'Cap. Ejecutadas']))
+                val_med_ab = st.number_input("Hallazgos", value=float(df.at[row_idx, 'Medidas Abiertas']))
+                val_med_ce = st.number_input("Cerrados", value=float(df.at[row_idx, 'Medidas Cerradas']))
+                val_exp = st.number_input("Expuestos", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
+                val_vig = st.number_input("Vigilancia", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
+
+            st.markdown("##### 📝 Observaciones")
+            c_obs = str(df.at[row_idx, 'Observaciones'])
+            if c_obs.lower() in ["nan", "none", "0", ""]: c_obs = ""
+            val_obs = st.text_area("Texto del Reporte:", value=c_obs, height=100)
+
+            if st.form_submit_button("💾 GUARDAR CAMBIOS"):
+                df.at[row_idx, 'Masa Laboral'] = val_masa
+                df.at[row_idx, 'Horas Extras'] = val_extras
+                df.at[row_idx, 'Horas Ausentismo'] = val_aus
+                df.at[row_idx, 'Accidentes CTP'] = val_acc
+                df.at[row_idx, 'Días Perdidos'] = val_dias
+                df.at[row_idx, 'Días Cargo'] = val_cargo
+                df.at[row_idx, 'Insp. Programadas'] = val_insp_p
+                df.at[row_idx, 'Insp. Ejecutadas'] = val_insp_e
+                df.at[row_idx, 'Cap. Programadas'] = val_cap_p
+                df.at[row_idx, 'Cap. Ejecutadas'] = val_cap_e
+                df.at[row_idx, 'Medidas Abiertas'] = val_med_ab
+                df.at[row_idx, 'Medidas Cerradas'] = val_med_ce
+                df.at[row_idx, 'Expuestos Silice/Ruido'] = val_exp
+                df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
+                df.at[row_idx, 'Observaciones'] = val_obs
+                
+                st.session_state['df_main'] = save_data(df)
+                st.success("Guardado.")
+                st.rerun()
+    except Exception as e:
+        st.error(f"Error al cargar registro: {e}")
