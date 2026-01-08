@@ -18,7 +18,7 @@ matplotlib.use('Agg')
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v21.csv"
+CSV_FILE = "base_datos_galvez_v22.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -95,24 +95,13 @@ def load_data():
         try:
             df = pd.read_csv(CSV_FILE)
             if df.empty: return inicializar_db_completa()
-            
-            # --- AUTO-REPARACIÓN DE ESTRUCTURA (SOLUCIÓN KEYERROR) ---
-            # Obtenemos la estructura perfecta nueva
+            # Auto-reparación estructura
             ref_df = get_structure_for_year(2026)
-            required_cols = ref_df.columns
-            
-            # Si faltan columnas en el archivo viejo, las creamos con 0
-            for col in required_cols:
+            for col in ref_df.columns:
                 if col not in df.columns:
-                    if col == 'Observaciones':
-                        df[col] = ""
-                    else:
-                        df[col] = 0.0
-            
-            # Aseguramos el orden correcto de columnas
-            df = df[required_cols]
-            
-            return procesar_datos(df)
+                    if col == 'Observaciones': df[col] = ""
+                    else: df[col] = 0.0
+            return procesar_datos(df[ref_df.columns])
         except: return inicializar_db_completa()
     return inicializar_db_completa()
 
@@ -127,16 +116,16 @@ def save_data(df):
 def generar_insight_automatico(row_mes, ta_acum, metas):
     insights = []
     if ta_acum > metas['meta_ta']:
-        insights.append(f"⚠️ <b>ALERTA CRÍTICA:</b> Tasa Acumulada ({ta_acum:.2f}%) excede la meta ({metas['meta_ta']}%)")
+        insights.append(f"⚠️ <b>ALERTA:</b> Tasa Acumulada ({ta_acum:.2f}%) excede meta ({metas['meta_ta']}%)")
     elif ta_acum > (metas['meta_ta'] * 0.8):
         insights.append(f"🔸 <b>PRECAUCIÓN:</b> Tasa Acumulada al límite.")
     else:
         insights.append(f"✅ <b>EXCELENTE:</b> Accidentabilidad bajo control.")
     
     if row_mes['Tasa Sin.'] > 0:
-        insights.append(f"🚑 <b>DÍAS PERDIDOS:</b> {int(row_mes['Días Perdidos'])} días perdidos (Temporal).")
+        insights.append(f"🚑 <b>DÍAS PERDIDOS:</b> {int(row_mes['Días Perdidos'])} días perdidos.")
     
-    if not insights: return "Sin desviaciones significativas."
+    if not insights: return "Sin desviaciones."
     return "<br>".join(insights)
 
 if 'df_main' not in st.session_state:
@@ -145,7 +134,6 @@ if 'df_main' not in st.session_state:
 # --- 3. BARRA LATERAL ---
 with st.sidebar:
     st.title("🌲 Panel de Control")
-    st.markdown("### 🖼️ Imagen Corporativa")
     uploaded_logo = st.file_uploader("Actualizar Logo", type=['png', 'jpg'])
     if uploaded_logo:
         with open(LOGO_FILE, "wb") as f: f.write(uploaded_logo.getbuffer())
@@ -186,34 +174,62 @@ class PDF_SST(FPDF):
         self.rect(0, 0, 210, 40, 'F')
         if os.path.exists(LOGO_FILE): self.image(LOGO_FILE, 10, 8, 35)
         
-        self.set_xy(50, 10)
-        self.set_font('Arial', 'B', 16)
-        self.set_text_color(*COLOR_PRIMARY)
+        self.set_xy(50, 10); self.set_font('Arial', 'B', 16); self.set_text_color(*COLOR_PRIMARY)
         self.cell(0, 8, 'SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA', 0, 1, 'L')
-        
-        self.set_xy(50, 18)
-        self.set_font('Arial', 'B', 11)
-        self.set_text_color(*COLOR_SECONDARY)
+        self.set_xy(50, 18); self.set_font('Arial', 'B', 11); self.set_text_color(*COLOR_SECONDARY)
         self.cell(0, 6, 'INFORME EJECUTIVO DE GESTIÓN SST (DS 44)', 0, 1, 'L')
         
-        self.set_draw_color(*COLOR_PRIMARY)
-        self.set_line_width(1)
-        self.line(10, 38, 200, 38)
-        self.ln(30)
+        self.set_draw_color(*COLOR_PRIMARY); self.set_line_width(1)
+        self.line(10, 38, 200, 38); self.ln(30)
 
     def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.set_text_color(150)
+        self.set_y(-15); self.set_font('Arial', 'I', 8); self.set_text_color(150)
         self.cell(0, 10, f'Documento Oficial SGSST - Pagina {self.page_no()}', 0, 0, 'C')
 
     def section_title(self, title):
-        self.set_font('Arial', 'B', 12)
-        self.set_fill_color(*COLOR_SECONDARY)
-        self.set_text_color(255, 255, 255)
+        self.set_font('Arial', 'B', 12); self.set_fill_color(*COLOR_SECONDARY); self.set_text_color(255, 255, 255)
         self.cell(0, 8, f"  {title}", 0, 1, 'L', 1)
-        self.set_text_color(0, 0, 0)
-        self.ln(4)
+        self.set_text_color(0, 0, 0); self.ln(4)
+
+    def draw_kpi_circle_pair(self, title, val_m, val_a, max_scale, meta, unit, x, y):
+        # Crear gráfico doble (Mes | Acumulado)
+        try:
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(4, 2))
+            
+            # Configurar anillo Mes
+            color_m = '#4CAF50' if val_m <= meta else '#F44336' # Menos es mejor (Accidentabilidad)
+            if "Gest" in title: color_m = '#4CAF50' if val_m >= meta else '#F44336' # Más es mejor (Gestión)
+            
+            val_m_plot = min(val_m, max_scale); rem_m = max_scale - val_m_plot
+            ax1.pie([val_m_plot, rem_m], colors=[color_m, '#EEEEEE'], startangle=90, counterclock=False, wedgeprops=dict(width=0.3, edgecolor='white'))
+            ax1.text(0, 0, f"{val_m:.1f}\n{unit}", ha='center', va='center', fontsize=10, fontweight='bold')
+            ax1.set_title("MENSUAL", fontsize=8, color='#555555')
+
+            # Configurar anillo Acumulado
+            color_a = '#4CAF50' if val_a <= meta else '#F44336'
+            if "Gest" in title: color_a = '#4CAF50' if val_a >= meta else '#F44336'
+            
+            val_a_plot = min(val_a, max_scale); rem_a = max_scale - val_a_plot
+            ax2.pie([val_a_plot, rem_a], colors=[color_a, '#EEEEEE'], startangle=90, counterclock=False, wedgeprops=dict(width=0.3, edgecolor='white'))
+            ax2.text(0, 0, f"{val_a:.1f}\n{unit}", ha='center', va='center', fontsize=10, fontweight='bold')
+            ax2.set_title("ACUMULADO", fontsize=8, color='#555555')
+
+            # Guardar
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                plt.savefig(tmp.name, format='png', bbox_inches='tight', dpi=100)
+                tmp_name = tmp.name
+            plt.close(fig)
+            
+            # Marco y Título
+            self.set_xy(x, y)
+            self.set_font('Arial', 'B', 9)
+            self.cell(90, 8, title, 0, 1, 'C')
+            self.image(tmp_name, x=x+5, y=y+8, w=80, h=40)
+            os.unlink(tmp_name)
+            
+        except Exception as e:
+            self.set_xy(x, y)
+            self.cell(90, 20, "Error Gráfico", 1)
 
     def draw_donut_chart_image(self, val_pct, color_hex, x, y, size=30):
         try:
@@ -238,8 +254,7 @@ class PDF_SST(FPDF):
     def footer_signatures(self):
         y_pos = self.get_y() + 10
         if y_pos > 250:
-            self.add_page()
-            y_pos = self.get_y() + 20
+            self.add_page(); y_pos = self.get_y() + 20
         self.set_y(y_pos)
         self.line(20, y_pos, 90, y_pos)
         self.set_xy(20, y_pos + 2); self.set_font('Arial', 'B', 9); self.set_text_color(0,0,0)
@@ -255,21 +270,15 @@ class PDF_SST(FPDF):
         self.multi_cell(0, 4, "Este documento es parte integrante del SGSST. Confidencial.", 0, 'C')
 
     def draw_detailed_stats_table(self, data_list):
-        """Dibuja la Tabla Maestra de Indicadores"""
         self.set_font('Arial', 'B', 9)
-        self.set_fill_color(230, 230, 230)
-        self.set_text_color(0, 0, 0)
-        
-        # Headers
+        self.set_fill_color(230, 230, 230); self.set_text_color(0, 0, 0)
         self.cell(100, 8, "INDICADOR (DS 67 / DS 40)", 1, 0, 'L', 1)
         self.cell(45, 8, "MES ACTUAL", 1, 0, 'C', 1)
         self.cell(45, 8, "ACUMULADO ANUAL", 1, 1, 'C', 1)
-        
         self.set_font('Arial', '', 9)
         for label, val_m, val_a, is_bold in data_list:
             if is_bold: self.set_font('Arial', 'B', 9)
             else: self.set_font('Arial', '', 9)
-            
             self.ln()
             self.cell(100, 7, f" {label}", 1, 0, 'L')
             self.cell(45, 7, str(val_m), 1, 0, 'C')
@@ -306,7 +315,6 @@ with tab_dash:
     idx_corte = MESES_ORDEN.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
     
-    # Acumulados Absolutos
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_fatales = df_acum['Accidentes Fatales'].sum()
     sum_ep = df_acum['Enf. Profesionales'].sum()
@@ -316,20 +324,15 @@ with tab_dash:
     sum_indemnizados = df_acum['Indemnizados'].sum()
     sum_hht = df_acum['HHT'].sum()
     
-    # Promedios
     df_masa_ok = df_acum[df_acum['Masa Laboral'] > 0]
     avg_masa = df_masa_ok['Masa Laboral'].mean() if not df_masa_ok.empty else 0
 
-    # Tasas Acumuladas
     ta_acum = (sum_acc / avg_masa * 100) if avg_masa > 0 else 0
-    ts_acum = (sum_dias_acc / avg_masa * 100) if avg_masa > 0 else 0 # Siniestralidad Temporal
+    ts_acum = (sum_dias_acc / avg_masa * 100) if avg_masa > 0 else 0 
     if_acum = (sum_acc * 1000000 / sum_hht) if sum_hht > 0 else 0
-    
-    # Factor Siniestralidad Inv/Muerte (Simulado con Días Cargo, lo usual para DS67)
     sum_dias_cargo = df_acum['Días Cargo'].sum()
     ig_acum = ((sum_dias_acc + sum_dias_cargo) * 1000000 / sum_hht) if sum_hht > 0 else 0
     
-    # Gestión
     def safe_div(a, b): return (a/b*100) if b > 0 else 0
     p_insp = safe_div(row_mes['Insp. Ejecutadas'], row_mes['Insp. Programadas'])
     p_cap = safe_div(row_mes['Cap. Ejecutadas'], row_mes['Cap. Programadas'])
@@ -340,27 +343,32 @@ with tab_dash:
     st.info("💡 **ANÁLISIS INTELIGENTE DEL SISTEMA:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     
-    # TABLA RESUMEN EN PANTALLA
+    # VISUALIZACIÓN DASHBOARD
+    st.markdown("---")
+    st.markdown(f"#### 📊 TABLERO VISUAL (MES vs ACUMULADO)")
+    
+    c_k1, c_k2, c_k3, c_k4 = st.columns(4)
+    def kpi_card(title, v_m, v_a, unit):
+        return f"""
+        <div style="border:1px solid #ddd; padding:10px; border-radius:5px; text-align:center;">
+            <div style="color:#888; font-size:12px;">{title}</div>
+            <div style="font-size:20px; font-weight:bold; color:#B71C1C;">{v_m} <span style="font-size:12px; color:#555;">(Mes)</span></div>
+            <div style="font-size:20px; font-weight:bold; color:#1B5E20;">{v_a} <span style="font-size:12px; color:#555;">(Acum)</span></div>
+            <div style="color:#aaa; font-size:10px;">{unit}</div>
+        </div>
+        """
+    
+    c_k1.markdown(kpi_card("TASA ACCIDENTABILIDAD", f"{row_mes['Tasa Acc.']:.2f}", f"{ta_acum:.2f}", "%"), unsafe_allow_html=True)
+    c_k2.markdown(kpi_card("TASA SINIESTRALIDAD", f"{row_mes['Tasa Sin.']:.2f}", f"{ts_acum:.2f}", "Dias/Trab"), unsafe_allow_html=True)
+    c_k3.markdown(kpi_card("TASA FRECUENCIA", f"{row_mes['Indice Frec.']:.2f}", f"{if_acum:.2f}", "Acc/1M HHT"), unsafe_allow_html=True)
+    c_k4.markdown(kpi_card("TASA GRAVEDAD", f"{row_mes['Indice Grav.']:.0f}", f"{ig_acum:.0f}", "Dias/1M HHT"), unsafe_allow_html=True)
+
     st.markdown("---")
     st.markdown("#### 📋 RESUMEN ESTADÍSTICO")
-    
-    # Preparamos datos para mostrar
     stats_data = {
-        'Indicador': [
-            'Nº Accidentes CTP', 'Nº Enf. Profesionales', 'Días Perdidos (Acc)', 'Días Perdidos (EP)',
-            'Promedio Trabajadores', 'Nº Accidentes Fatales', 'Nº Pensionados', 'Nº Indemnizados',
-            'Tasa Acc. (%)', 'Tasa Sin. (Temp)', 'Tasa Frecuencia', 'Tasa Gravedad', 'Horas Hombre (HHT)'
-        ],
-        'Mes Actual': [
-            int(row_mes['Accidentes CTP']), int(row_mes['Enf. Profesionales']), int(row_mes['Días Perdidos']), int(row_mes['Días Perdidos EP']),
-            f"{row_mes['Masa Laboral']:.1f}", int(row_mes['Accidentes Fatales']), int(row_mes['Pensionados']), int(row_mes['Indemnizados']),
-            f"{row_mes['Tasa Acc.']:.2f}", f"{row_mes['Tasa Sin.']:.2f}", f"{row_mes['Indice Frec.']:.2f}", f"{row_mes['Indice Grav.']:.0f}", int(row_mes['HHT'])
-        ],
-        'Acumulado Anual': [
-            int(sum_acc), int(sum_ep), int(sum_dias_acc), int(sum_dias_ep),
-            f"{avg_masa:.1f}", int(sum_fatales), int(sum_pensionados), int(sum_indemnizados),
-            f"{ta_acum:.2f}", f"{ts_acum:.2f}", f"{if_acum:.2f}", f"{ig_acum:.0f}", int(sum_hht)
-        ]
+        'Indicador': ['Accidentes CTP', 'Enf. Profesionales', 'Días Perdidos (Acc)', 'Promedio Trabajadores', 'HHT'],
+        'Mes Actual': [int(row_mes['Accidentes CTP']), int(row_mes['Enf. Profesionales']), int(row_mes['Días Perdidos']), f"{row_mes['Masa Laboral']:.1f}", int(row_mes['HHT'])],
+        'Acumulado Anual': [int(sum_acc), int(sum_ep), int(sum_dias_acc), f"{avg_masa:.1f}", int(sum_hht)]
     }
     st.table(pd.DataFrame(stats_data))
 
@@ -385,11 +393,25 @@ with tab_dash:
             pdf.add_page(); pdf.set_font('Arial', 'B', 12)
             pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'R')
             
-            # --- TABLA MAESTRA DE INDICADORES ---
-            pdf.section_title("1. ESTADÍSTICA DE SINIESTRALIDAD (DS 67)")
-            pdf.ln(5)
+            # --- SECCIÓN VISUAL (KPIS CIRCULARES) ---
+            pdf.section_title("1. INDICADORES VISUALES (MES vs ACUMULADO)")
             
-            # Lista de datos (Etiqueta, Valor Mes, Valor Acumulado, EsTitulo?)
+            # Fila 1: Tasas Principales
+            y_start = pdf.get_y()
+            pdf.draw_kpi_circle_pair("TASA ACCIDENTABILIDAD", row_mes['Tasa Acc.'], ta_acum, 8, metas['meta_ta'], "%", 10, y_start)
+            pdf.draw_kpi_circle_pair("TASA SINIESTRALIDAD", row_mes['Tasa Sin.'], ts_acum, 50, 10, "Dias", 110, y_start)
+            
+            # Fila 2
+            y_start += 55
+            pdf.draw_kpi_circle_pair("TASA FRECUENCIA", row_mes['Indice Frec.'], if_acum, 50, 10, "IF", 10, y_start)
+            pdf.draw_kpi_circle_pair("TASA GRAVEDAD", row_mes['Indice Grav.'], ig_acum, 200, 50, "IG", 110, y_start)
+            
+            pdf.set_y(y_start + 60)
+            
+            # --- TABLA DETALLADA ---
+            pdf.section_title("2. ESTADÍSTICA DE SINIESTRALIDAD (DETALLE)")
+            pdf.ln(2)
+            
             table_rows = [
                 ("Nro de Accidentes CTP", int(row_mes['Accidentes CTP']), int(sum_acc), False),
                 ("Nro de Enfermedades Profesionales", int(row_mes['Enf. Profesionales']), int(sum_ep), False),
@@ -400,18 +422,19 @@ with tab_dash:
                 ("Nro Pensionados (Invalidez)", int(row_mes['Pensionados']), int(sum_pensionados), False),
                 ("Nro Indemnizados", int(row_mes['Indemnizados']), int(sum_indemnizados), False),
                 ("Tasa Siniestralidad (Inc. Temporal)", f"{row_mes['Tasa Sin.']:.2f}", f"{ts_acum:.2f}", False),
-                ("Dias Cargo (Inv. y Muerte)", int(row_mes['Días Cargo']), int(sum_dias_cargo), False), # Factor Siniestralidad Proxy
+                ("Dias Cargo (Inv. y Muerte)", int(row_mes['Días Cargo']), int(sum_dias_cargo), False), 
                 ("Tasa de Accidentabilidad (%)", f"{row_mes['Tasa Acc.']:.2f}", f"{ta_acum:.2f}", True),
                 ("Tasa de Frecuencia", f"{row_mes['Indice Frec.']:.2f}", f"{if_acum:.2f}", True),
                 ("Tasa de Gravedad", f"{row_mes['Indice Grav.']:.0f}", f"{ig_acum:.0f}", True),
                 ("Horas Hombre (HHT)", int(row_mes['HHT']), int(sum_hht), False)
             ]
-            
             pdf.draw_detailed_stats_table(table_rows)
-            pdf.ln(10)
+            
+            # PÁGINA 2
+            pdf.add_page()
             
             # GESTIÓN (Gráficos)
-            pdf.section_title("2. CUMPLIMIENTO PROGRAMA GESTIÓN")
+            pdf.section_title("3. CUMPLIMIENTO PROGRAMA GESTIÓN")
             insp_txt = f"{int(row_mes['Insp. Ejecutadas'])} de {int(row_mes['Insp. Programadas'])}"
             cap_txt = f"{int(row_mes['Cap. Ejecutadas'])} de {int(row_mes['Cap. Programadas'])}"
             med_txt = f"{int(row_mes['Medidas Cerradas'])} de {int(row_mes['Medidas Abiertas'])}"
@@ -429,9 +452,8 @@ with tab_dash:
                 pdf.set_xy(x_pos - 5, y_circles + 32); pdf.set_font('Arial', 'B', 8); pdf.cell(40, 4, label, 0, 1, 'C')
                 pdf.set_xy(x_pos - 5, y_circles + 36); pdf.set_font('Arial', '', 7); pdf.set_text_color(100); pdf.cell(40, 4, txt, 0, 1, 'C'); pdf.set_text_color(0)
 
-            # PAGINA 2
-            pdf.add_page()
-            pdf.section_title("3. OBSERVACIONES DEL EXPERTO")
+            pdf.set_y(y_circles + 45)
+            pdf.section_title("4. OBSERVACIONES DEL EXPERTO")
             pdf.set_font('Arial', '', 10); pdf.set_text_color(0,0,0)
             clean_insight = pdf.clean_text(insight_text.replace("<b>","").replace("</b>","").replace("<br>","\n").replace("⚠️","").replace("✅","").replace("🚑",""))
             obs_raw = str(row_mes['Observaciones'])
