@@ -6,14 +6,27 @@ import os
 import shutil
 from fpdf import FPDF
 from io import BytesIO
+import matplotlib.pyplot as plt
+import matplotlib
+import tempfile
+import numpy as np
+
+# Configuración Matplotlib para servidor
+matplotlib.use('Agg')
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v15.csv"
+CSV_FILE = "base_datos_galvez_v17.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+
+# --- COLORES CORPORATIVOS ---
+COLOR_PRIMARY = (183, 28, 28) # Rojo Oscuro
+COLOR_SECONDARY = (50, 50, 50) # Gris Oscuro
+COLOR_GREEN = (46, 125, 50) # Verde Éxito
+COLOR_RED = (198, 40, 40) # Rojo Alerta
 
 def get_structure_for_year(year):
     data = []
@@ -48,29 +61,23 @@ def procesar_datos(df):
 
     # CÁLCULOS
     df['HHT'] = (df['Masa Laboral'] * 180) + df['Horas Extras'] - df['Horas Ausentismo']
-    # Corrección Lógica: Si HHT da negativo o 0, se fuerza a 0.
     df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 0)
     
-    # Lógica de Seguridad: Si Masa es 0, todo es 0 (evita div/0 y datos fantasmas)
     def calc_row(row):
         masa = row['Masa Laboral']
         hht = row['HHT']
-        if masa <= 0 or hht <= 0:
-            return 0, 0, 0, 0
-        
+        if masa <= 0 or hht <= 0: return 0, 0, 0, 0
         ta = (row['Accidentes CTP'] / masa) * 100
         ts = (row['Días Perdidos'] / masa) * 100
         if_ = (row['Accidentes CTP'] * 1000000) / hht
         ig = ((row['Días Perdidos'] + row['Días Cargo']) * 1000000) / hht
         return ta, ts, if_, ig
 
-    # Aplicar cálculo fila por fila
     result = df.apply(calc_row, axis=1, result_type='expand')
     df['Tasa Acc.'] = result[0]
     df['Tasa Sin.'] = result[1]
     df['Indice Frec.'] = result[2]
     df['Indice Grav.'] = result[3]
-    
     return df
 
 def load_data():
@@ -98,11 +105,11 @@ def save_data(df):
 def generar_insight_automatico(row_mes, ta_acum, metas):
     insights = []
     if ta_acum > metas['meta_ta']:
-        insights.append(f"⚠️ <b>CRÍTICO:</b> Tasa Acumulada ({ta_acum:.2f}%) excede la meta ({metas['meta_ta']}%)")
+        insights.append(f"⚠️ <b>ALERTA CRÍTICA:</b> Tasa Acumulada ({ta_acum:.2f}%) excede la meta ({metas['meta_ta']}%)")
     elif ta_acum > (metas['meta_ta'] * 0.8):
-        insights.append(f"🔸 <b>ALERTA:</b> Tasa Acumulada en zona de riesgo.")
+        insights.append(f"🔸 <b>PRECAUCIÓN:</b> Tasa Acumulada al límite.")
     else:
-        insights.append(f"✅ <b>CONTROLADO:</b> Tasa Acumulada bajo la meta.")
+        insights.append(f"✅ <b>EXCELENTE:</b> Accidentabilidad bajo control.")
     
     if row_mes['Tasa Sin.'] > 0:
         insights.append(f"🚑 <b>DÍAS PERDIDOS:</b> {int(row_mes['Días Perdidos'])} días en este mes.")
@@ -148,39 +155,123 @@ with st.sidebar:
     st.download_button("📊 Descargar Excel", data=excel_data, file_name="Base_SST_Completa.xlsx")
 
     st.markdown("---")
-    st.markdown("### 🎯 Metas KPI")
-    meta_ta = st.slider("Límite Tasa Acc. (%)", 0.0, 8.0, 3.0)
+    meta_ta = st.slider("Meta Tasa Acc. (%)", 0.0, 8.0, 3.0)
     meta_gestion = st.slider("Meta Gestión (%)", 50, 100, 90)
     metas = {'meta_ta': meta_ta, 'meta_gestion': meta_gestion}
 
-# --- 4. MOTOR PDF ---
+# --- 4. MOTOR PDF EJECUTIVO ---
 class PDF_SST(FPDF):
     def header(self):
-        if os.path.exists(LOGO_FILE): self.image(LOGO_FILE, 10, 8, 40)
-        self.set_xy(55, 12); self.set_font('Arial', 'B', 14)
-        self.cell(0, 6, 'SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA', 0, 1, 'L')
-        self.set_xy(55, 19); self.set_font('Arial', 'B', 11); self.set_text_color(100)
-        self.cell(0, 6, 'SISTEMA DE GESTIÓN EN SST DS44', 0, 1, 'L')
-        self.set_draw_color(183, 28, 28); self.set_line_width(0.5)
-        self.line(10, 50, 285, 50); self.ln(25)
+        # Fondo del encabezado
+        self.set_fill_color(245, 245, 245)
+        self.rect(0, 0, 210, 40, 'F')
+        
+        if os.path.exists(LOGO_FILE): self.image(LOGO_FILE, 10, 8, 35)
+        
+        self.set_xy(50, 10)
+        self.set_font('Arial', 'B', 16)
+        self.set_text_color(*COLOR_PRIMARY)
+        self.cell(0, 8, 'SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA', 0, 1, 'L')
+        
+        self.set_xy(50, 18)
+        self.set_font('Arial', 'B', 11)
+        self.set_text_color(*COLOR_SECONDARY)
+        self.cell(0, 6, 'INFORME EJECUTIVO DE GESTIÓN SST (DS 44)', 0, 1, 'L')
+        
+        self.set_draw_color(*COLOR_PRIMARY)
+        self.set_line_width(1)
+        self.line(10, 38, 200, 38)
+        self.ln(30)
 
     def footer(self):
-        self.set_y(-15); self.set_font('Arial', 'I', 8); self.set_text_color(128)
-        self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.set_text_color(150)
+        self.cell(0, 10, f'Documento Oficial SGSST - Pagina {self.page_no()}', 0, 0, 'C')
 
     def section_title(self, title):
-        self.set_font('Arial', 'B', 10); self.set_fill_color(240); self.set_text_color(0)
-        self.cell(0, 8, title, 1, 1, 'L', 1); self.ln(4)
+        self.set_font('Arial', 'B', 12)
+        self.set_fill_color(*COLOR_SECONDARY)
+        self.set_text_color(255, 255, 255)
+        self.cell(0, 8, f"  {title}", 0, 1, 'L', 1)
+        self.ln(4)
 
-    def kpi_row(self, label, val_mes, val_acum, unit):
-        def safe_fmt(val): return f"{float(val):.2f}"
-        def safe_int(val): return f"{int(val)}"
-        v_m = safe_int(val_mes) if "N" in unit or "Dias" in unit else safe_fmt(val_mes)
-        v_a = safe_int(val_acum) if "N" in unit or "Dias" in unit else safe_fmt(val_acum)
-        self.set_font('Arial', '', 10); self.cell(70, 8, label, 1)
-        self.set_font('Arial', 'B', 10); self.cell(40, 8, v_m, 1, 0, 'C')
-        self.set_text_color(183, 28, 28); self.cell(40, 8, v_a, 1, 0, 'C')
-        self.set_text_color(0); self.set_font('Arial', 'I', 9); self.cell(40, 8, unit, 1, 1, 'C')
+    def kpi_card_color(self, label, value, unit, x, y, w, h, is_good):
+        """Dibuja una tarjeta con color de fondo según estado"""
+        # Sombra
+        self.set_fill_color(220, 220, 220)
+        self.rect(x+1, y+1, w, h, 'F')
+        
+        # Fondo Color (Verde o Rojo suave)
+        color_bg = (232, 245, 233) if is_good else (255, 235, 238) # Tonos claros
+        self.set_fill_color(*color_bg)
+        self.set_draw_color(200, 200, 200)
+        self.set_line_width(0.2)
+        self.rect(x, y, w, h, 'DF')
+        
+        # Borde Lateral Color Fuerte
+        color_side = COLOR_GREEN if is_good else COLOR_RED
+        self.set_fill_color(*color_side)
+        self.rect(x, y, 2, h, 'F')
+        
+        # Texto
+        self.set_xy(x+4, y+3)
+        self.set_font('Arial', 'B', 8)
+        self.set_text_color(100, 100, 100)
+        self.cell(w-5, 4, label, 0, 1, 'L')
+        
+        self.set_xy(x+2, y+10)
+        self.set_font('Arial', 'B', 16)
+        self.set_text_color(*COLOR_SECONDARY)
+        self.cell(w-5, 8, str(value), 0, 1, 'C')
+        
+        self.set_xy(x+2, y+20)
+        self.set_font('Arial', '', 7)
+        self.cell(w-5, 4, unit, 0, 1, 'C')
+
+    def draw_trend_chart(self, df_hist, x, y, w, h):
+        try:
+            # Crear gráfico de linea con Matplotlib
+            fig, ax = plt.subplots(figsize=(6, 3))
+            
+            # Datos
+            months = df_hist['Mes'].str[:3] # Abr 3 letras
+            values = df_hist['Tasa Acc.']
+            
+            ax.plot(months, values, marker='o', color='#b71c1c', linewidth=2, label='Tasa Acc.')
+            ax.fill_between(months, values, color='#b71c1c', alpha=0.1)
+            
+            ax.set_title('Tendencia Anual de Accidentabilidad', fontsize=10, color='#333333')
+            ax.grid(True, linestyle='--', alpha=0.5)
+            ax.tick_params(axis='both', which='major', labelsize=8)
+            
+            # Guardar temp
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                plt.savefig(tmp.name, format='png', bbox_inches='tight', dpi=100)
+                tmp_name = tmp.name
+            plt.close(fig)
+            
+            self.image(tmp_name, x=x, y=y, w=w, h=h)
+            os.unlink(tmp_name)
+        except:
+            self.set_xy(x, y)
+            self.cell(w, h, "Error al generar tendencia", 1, 0, 'C')
+
+    def draw_donut_chart_image(self, val_pct, color_hex, x, y, size=30):
+        try:
+            val_plot = min(val_pct, 100); val_plot = max(val_plot, 0)
+            fig, ax = plt.subplots(figsize=(2, 2))
+            ax.pie([val_plot, 100-val_plot], colors=[color_hex, '#eeeeee'], startangle=90, counterclock=False, 
+                   wedgeprops=dict(width=0.4, edgecolor='white'))
+            ax.text(0, 0, f"{val_pct:.0f}%", ha='center', va='center', fontsize=12, fontweight='bold', color='#333333')
+            
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                plt.savefig(tmp.name, format='png', transparent=True, dpi=100, bbox_inches='tight')
+                tmp_name = tmp.name
+            plt.close(fig)
+            self.image(tmp_name, x=x, y=y, w=size, h=size)
+            os.unlink(tmp_name)
+        except: pass
 
     def clean_text(self, text):
         replacements = {'\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"', '\u2022': '*', '€': 'EUR'}
@@ -213,11 +304,11 @@ with tab_dash:
     if not months_avail: st.warning("Sin datos."); st.stop()
     sel_month = col_m.selectbox("Mes de Corte", months_avail, index=len(months_avail)-1 if months_avail else 0)
     
-    # Datos y Cálculos
     row_mes = df_year[df_year['Mes'] == sel_month].iloc[0]
     idx_corte = MESES_ORDEN.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
     
+    # Cálculos
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_dias = df_acum['Días Perdidos'].sum()
     sum_hht = df_acum['HHT'].sum()
@@ -239,57 +330,29 @@ with tab_dash:
     st.info("💡 **ANÁLISIS INTELIGENTE DEL SISTEMA:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     
-    # --- VISUALIZACIÓN NUEVA: VELOCÍMETROS (GAUGES) ---
     st.markdown("---")
-    st.markdown(f"#### 🚀 DESEMPEÑO ACUMULADO AL CIERRE DE {sel_month.upper()}")
-    
+    st.markdown(f"#### 🚀 DESEMPEÑO ACUMULADO")
     col_g1, col_g2, col_g3, col_g4 = st.columns(4)
-    
-    def plot_gauge(value, title, max_val, threshold_green, inverse=False):
-        # Inverse: True significa que "Menos es mejor" (Accidentabilidad), False "Mas es mejor" (Gestión)
+    def plot_gauge(value, title, max_val, threshold, inverse=False):
         colors = {'good': '#2E7D32', 'bad': '#C62828'}
-        
-        if inverse:
-            bar_color = colors['good'] if value <= threshold_green else colors['bad']
-        else:
-            bar_color = colors['good'] if value >= threshold_green else colors['bad']
-            
-        fig = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = value,
-            title = {'text': title, 'font': {'size': 14}},
-            gauge = {
-                'axis': {'range': [0, max_val]},
-                'bar': {'color': bar_color},
-                'steps': [
-                    {'range': [0, max_val], 'color': "#f0f0f0"}],
-            }
-        ))
+        bar_color = colors['good'] if (value <= threshold if inverse else value >= threshold) else colors['bad']
+        fig = go.Figure(go.Indicator(mode = "gauge+number", value = value, title = {'text': title, 'font': {'size': 14}},
+            gauge = {'axis': {'range': [0, max_val]}, 'bar': {'color': bar_color}}))
         fig.update_layout(height=200, margin=dict(t=30,b=10,l=20,r=20))
         return fig
 
-    # Velocímetros
     with col_g1: st.plotly_chart(plot_gauge(ta_acum, "Tasa Acc. Acum", 8, metas['meta_ta'], True), use_container_width=True)
     with col_g2: st.plotly_chart(plot_gauge(ts_acum, "Tasa Sin. Acum", 50, 10, True), use_container_width=True)
     with col_g3: st.plotly_chart(plot_gauge(if_acum, "Ind. Frecuencia", 50, 10, True), use_container_width=True)
     
-    # Proyección Anual Simple
     meses_transcurridos = idx_corte + 1
-    proyeccion_acc = int((sum_acc / meses_transcurridos) * 12)
+    proyeccion = int((sum_acc / meses_transcurridos) * 12) if meses_transcurridos > 0 else 0
     with col_g4:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.metric("Total Accidentes (Real)", int(sum_acc))
-        st.metric("Proyección Cierre Año", proyeccion_acc, delta=f"{proyeccion_acc - int(sum_acc)} estimados", delta_color="inverse")
+        st.metric("Total Accidentes", int(sum_acc))
+        st.metric("Proyección Año", proyeccion, delta=f"{proyeccion - int(sum_acc)} estimados", delta_color="inverse")
 
     st.markdown("---")
-    st.markdown("#### 🔵 INDICADORES DEL MES")
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Tasa Accidentabilidad", f"{row_mes['Tasa Acc.']:.2f}%")
-    k2.metric("Tasa Siniestralidad", f"{row_mes['Tasa Sin.']:.2f}")
-    k3.metric("Indice Frecuencia", f"{row_mes['Indice Frec.']:.2f}")
-    k4.metric("Indice Gravedad", f"{row_mes['Indice Grav.']:.0f}")
-
-    st.markdown("#### 📋 Gestión Depto SST")
     g1, g2, g3, g4 = st.columns(4)
     def donut(val, title, col_obj):
         color = "#66BB6A" if val >= metas['meta_gestion'] else "#EF5350"
@@ -303,26 +366,41 @@ with tab_dash:
     donut(p_medidas, "Cierre Hallazgos", g3)
     donut(p_salud, "Salud Ocupacional", g4)
 
-    # Botón PDF
     st.markdown("---")
-    if st.button("📄 Generar Reporte PDF Oficial"):
+    if st.button("📄 Generar Reporte Ejecutivo PDF"):
         try:
             pdf = PDF_SST(orientation='P', format='A4')
-            pdf.add_page(); pdf.set_font('Arial', 'B', 12)
-            pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'L'); pdf.ln(2)
+            pdf.add_page()
             
-            pdf.section_title("1. INDICADORES DE RESULTADO")
-            pdf.set_fill_color(220); pdf.set_font('Arial', 'B', 9)
-            pdf.cell(70, 8, "INDICADOR", 1, 0, 'C', 1); pdf.cell(40, 8, "MES ACTUAL", 1, 0, 'C', 1)
-            pdf.cell(40, 8, "ACUMULADO", 1, 0, 'C', 1); pdf.cell(40, 8, "UNIDAD", 1, 1, 'C', 1)
+            # --- PÁGINA 1: DASHBOARD EJECUTIVO ---
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'R')
             
-            pdf.kpi_row("Tasa Accidentabilidad", row_mes['Tasa Acc.'], ta_acum, "%")
-            pdf.kpi_row("Tasa Siniestralidad", row_mes['Tasa Sin.'], ts_acum, "Dias/Trab")
-            pdf.kpi_row("Indice Frecuencia", row_mes['Indice Frec.'], if_acum, "Acc/1M HHT")
-            pdf.kpi_row("Total Accidentes CTP", row_mes['Accidentes CTP'], sum_acc, "N Eventos")
-            pdf.ln(5)
+            # 1. TARJETAS KPI (SEMAFORIZADAS)
+            pdf.section_title("1. INDICADORES CLAVE DE DESEMPEÑO (ACUMULADO)")
             
-            pdf.section_title("2. GESTIÓN OPERATIVA")
+            # Fila de tarjetas
+            y_cards = pdf.get_y()
+            card_w = 45
+            card_h = 30
+            gap = 5
+            
+            pdf.kpi_card_color("TASA ACCIDENTABILIDAD", f"{ta_acum:.2f}", "%", 10, y_cards, card_w, card_h, ta_acum <= metas['meta_ta'])
+            pdf.kpi_card_color("TASA SINIESTRALIDAD", f"{ts_acum:.2f}", "Dias/Trab", 10+card_w+gap, y_cards, card_w, card_h, True) # Sin meta definida, asumimos bien
+            pdf.kpi_card_color("INDICE FRECUENCIA", f"{if_acum:.2f}", "Acc/1M HHT", 10+(card_w+gap)*2, y_cards, card_w, card_h, True)
+            pdf.kpi_card_color("TOTAL ACCIDENTES", f"{int(sum_acc)}", "Eventos Reales", 10+(card_w+gap)*3, y_cards, card_w, card_h, sum_acc == 0)
+            
+            pdf.set_y(y_cards + card_h + 10)
+            
+            # 2. GRÁFICO DE TENDENCIA
+            pdf.section_title("2. TENDENCIA ANUAL DE ACCIDENTABILIDAD")
+            # Filtrar datos para el gráfico (hasta el mes actual)
+            pdf.draw_trend_chart(df_acum, 10, pdf.get_y(), 190, 60)
+            pdf.set_y(pdf.get_y() + 65)
+            
+            # 3. GESTIÓN OPERATIVA (CIRCULARES)
+            pdf.section_title("3. CUMPLIMIENTO PROGRAMA GESTIÓN")
+            
             insp_txt = f"{int(row_mes['Insp. Ejecutadas'])} de {int(row_mes['Insp. Programadas'])}"
             cap_txt = f"{int(row_mes['Cap. Ejecutadas'])} de {int(row_mes['Cap. Programadas'])}"
             med_txt = f"{int(row_mes['Medidas Cerradas'])} de {int(row_mes['Medidas Abiertas'])}"
@@ -330,33 +408,63 @@ with tab_dash:
             
             data_gest = [
                 ("Inspecciones", p_insp, insp_txt), ("Capacitaciones", p_cap, cap_txt),
-                ("Cierre Hallazgos", p_medidas, med_txt), ("Salud Ocup.", p_salud, salud_txt)
+                ("Hallazgos", p_medidas, med_txt), ("Salud Ocup.", p_salud, salud_txt)
             ]
-            for label, val, txt in data_gest:
-                pdf.cell(60, 8, label, 0); x=pdf.get_x(); y=pdf.get_y()
-                pdf.set_fill_color(230); pdf.rect(x, y+2, 60, 4, 'F')
-                pdf.set_fill_color(76, 175, 80) if val >= metas['meta_gestion'] else pdf.set_fill_color(244, 67, 54)
-                w_bar = (val/100)*60 if val <= 100 else 60
-                pdf.rect(x, y+2, w_bar, 4, 'F')
-                pdf.set_x(x+65); pdf.set_font('Arial', 'B', 10); pdf.set_text_color(0)
-                pdf.cell(15, 8, f"{val:.0f}%", 0, 0)
-                pdf.set_font('Arial', 'I', 8); pdf.set_text_color(100); pdf.cell(30, 8, f"({txt})", 0, 1)
-                pdf.set_font('Arial', '', 10); pdf.set_text_color(0)
+            
+            y_circles = pdf.get_y()
+            for i, (label, val, txt) in enumerate(data_gest):
+                x_pos = 15 + (i * 48)
+                color_hex = '#4CAF50' if val >= metas['meta_gestion'] else '#F44336'
+                pdf.draw_donut_chart_image(val, color_hex, x_pos, y_circles, size=30)
+                
+                pdf.set_xy(x_pos - 5, y_circles + 32)
+                pdf.set_font('Arial', 'B', 8)
+                pdf.cell(40, 4, label, 0, 1, 'C')
+                
+                pdf.set_xy(x_pos - 5, y_circles + 36)
+                pdf.set_font('Arial', '', 7)
+                pdf.set_text_color(100)
+                pdf.cell(40, 4, txt, 0, 1, 'C')
+                pdf.set_text_color(0)
 
-            pdf.ln(5); pdf.section_title("3. OBSERVACIONES")
-            pdf.set_font('Arial', '', 10); pdf.set_draw_color(100)
-            clean_insight = pdf.clean_text(insight_text.replace("<b>","").replace("</b>","").replace("<br>","\n").replace("⚠️","").replace("✅","").replace("🚑",""))
+            # --- PÁGINA 2: DETALLE Y OBSERVACIONES ---
+            pdf.add_page()
+            pdf.section_title("4. DETALLE ESTADÍSTICO MENSUAL")
+            
+            # Tabla
+            pdf.set_fill_color(230)
+            pdf.set_font('Arial', 'B', 8)
+            cols = [("MES", 25), ("M. LAB", 20), ("ACC", 15), ("DIAS P", 20), ("T. ACC", 20), ("T. SIN", 20), ("I. FREC", 20), ("I. GRAV", 20)]
+            
+            for c_name, c_w in cols: pdf.cell(c_w, 6, c_name, 1, 0, 'C', 1)
+            pdf.ln()
+            
+            pdf.set_font('Arial', '', 8)
+            for _, r in df_acum.iterrows():
+                pdf.cell(25, 6, r['Mes'], 1)
+                pdf.cell(20, 6, f"{int(r['Masa Laboral'])}", 1, 0, 'C')
+                pdf.cell(15, 6, f"{int(r['Accidentes CTP'])}", 1, 0, 'C')
+                pdf.cell(20, 6, f"{int(r['Días Perdidos'])}", 1, 0, 'C')
+                pdf.cell(20, 6, f"{r['Tasa Acc.']:.2f}", 1, 0, 'C')
+                pdf.cell(20, 6, f"{r['Tasa Sin.']:.2f}", 1, 0, 'C')
+                pdf.cell(20, 6, f"{r['Indice Frec.']:.2f}", 1, 0, 'C')
+                pdf.cell(20, 6, f"{r['Indice Grav.']:.0f}", 1, 0, 'C')
+                pdf.ln()
+
+            pdf.ln(10)
+            pdf.section_title("5. OBSERVACIONES DEL EXPERTO")
+            pdf.set_font('Arial', '', 10)
             obs_raw = str(row_mes['Observaciones'])
             if obs_raw.lower() in ["nan", "none", "0", "0.0", ""]: obs_raw = "Sin observaciones registradas."
             clean_obs = pdf.clean_text(obs_raw)
-            pdf.multi_cell(0, 6, f"ANALISIS SISTEMA:\n{clean_insight}\n\nCOMENTARIOS:\n{clean_obs}", 1, 'L')
+            pdf.multi_cell(0, 6, clean_obs, 1, 'L')
             
-            pdf.ln(15); pdf.line(110, pdf.get_y(), 190, pdf.get_y())
+            pdf.ln(20); pdf.line(110, pdf.get_y(), 190, pdf.get_y())
             pdf.set_xy(110, pdf.get_y()+2); pdf.set_font('Arial', 'B', 8)
-            pdf.cell(80, 5, "Firma Experto", 0, 0, 'C')
+            pdf.cell(80, 5, "Firma Experto en Prevención", 0, 0, 'C')
             
             out = pdf.output(dest='S').encode('latin-1')
-            st.download_button("📥 Descargar Reporte PDF", out, f"Reporte_{sel_month}_{sel_year}.pdf", "application/pdf")
+            st.download_button("📥 Descargar Reporte Ejecutivo", out, f"Reporte_SST_{sel_month}.pdf", "application/pdf")
         except Exception as e: st.error(f"Error PDF: {e}")
 
 with tab_editor:
@@ -417,4 +525,4 @@ with tab_editor:
                 st.session_state['df_main'] = save_data(df)
                 st.success("Guardado.")
                 st.rerun()
-    except: st.error("Seleccione un Año/Mes válido.")
+    except: st.error("Selección inválida.")
