@@ -18,7 +18,7 @@ matplotlib.use('Agg')
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v23.csv"
+CSV_FILE = "base_datos_galvez_v24.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -57,7 +57,7 @@ def inicializar_db_completa():
     df_26 = get_structure_for_year(2026)
     return pd.concat([df_24, df_25, df_26], ignore_index=True)
 
-def procesar_datos(df):
+def procesar_datos(df, factor_base=180):
     # Limpieza de tipos
     cols_exclude = ['Año', 'Mes', 'Observaciones']
     for col in df.columns:
@@ -68,8 +68,9 @@ def procesar_datos(df):
     if 'Observaciones' not in df.columns: df['Observaciones'] = ""
     df['Observaciones'] = df['Observaciones'].fillna("").astype(str)
 
-    # CÁLCULOS
-    df['HHT'] = (df['Masa Laboral'] * 180) + df['Horas Extras'] - df['Horas Ausentismo']
+    # CÁLCULOS CRÍTICOS (HHT)
+    # Fórmula: (Trabajadores * FACTOR) + Extras - Ausentismo
+    df['HHT'] = (df['Masa Laboral'] * factor_base) + df['Horas Extras'] - df['Horas Ausentismo']
     df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 0)
     
     def calc_row(row):
@@ -95,18 +96,19 @@ def load_data():
         try:
             df = pd.read_csv(CSV_FILE)
             if df.empty: return inicializar_db_completa()
-            # Auto-reparación estructura
+            # Reparación estructura
             ref_df = get_structure_for_year(2026)
             for col in ref_df.columns:
                 if col not in df.columns:
                     if col == 'Observaciones': df[col] = ""
                     else: df[col] = 0.0
+            # NOTA: Procesamos con factor 180 por defecto al cargar, pero la UI lo actualizará
             return procesar_datos(df[ref_df.columns])
         except: return inicializar_db_completa()
     return inicializar_db_completa()
 
-def save_data(df):
-    df_calc = procesar_datos(df)
+def save_data(df, factor_base):
+    df_calc = procesar_datos(df, factor_base)
     if os.path.exists(CSV_FILE):
         try: shutil.copy(CSV_FILE, f"{CSV_FILE}.bak")
         except: pass
@@ -116,7 +118,7 @@ def save_data(df):
 def generar_insight_automatico(row_mes, ta_acum, metas):
     insights = []
     if ta_acum > metas['meta_ta']:
-        insights.append(f"⚠️ <b>ALERTA:</b> Tasa Acumulada ({ta_acum:.2f}%) excede meta ({metas['meta_ta']}%)")
+        insights.append(f"⚠️ <b>ALERTA CRÍTICA:</b> Tasa Acumulada ({ta_acum:.2f}%) excede la meta ({metas['meta_ta']}%)")
     elif ta_acum > (metas['meta_ta'] * 0.8):
         insights.append(f"🔸 <b>PRECAUCIÓN:</b> Tasa Acumulada al límite.")
     else:
@@ -141,6 +143,18 @@ with st.sidebar:
     if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, use_container_width=True)
 
     st.markdown("---")
+    st.markdown("### ⚙️ Configuración Cálculo")
+    
+    # FACTOR HHT CONFIGURABLE
+    factor_hht = st.number_input("Factor Horas Base (Mensual)", value=180, 
+                                 help="Ej: 180 (45hrs), 176 (44hrs), 160 (40hrs). Se multiplica por el N° de Trabajadores.")
+    
+    # Recalcular en tiempo real si cambia el factor
+    if 'factor_hht_cache' not in st.session_state or st.session_state['factor_hht_cache'] != factor_hht:
+        st.session_state['df_main'] = procesar_datos(st.session_state['df_main'], factor_hht)
+        st.session_state['factor_hht_cache'] = factor_hht
+
+    st.markdown("---")
     st.markdown("### 📅 Gestión de Años")
     years_present = st.session_state['df_main']['Año'].unique()
     c_y1, c_y2 = st.columns(2)
@@ -150,7 +164,7 @@ with st.sidebar:
         else:
             df_new = get_structure_for_year(new_year_input)
             st.session_state['df_main'] = pd.concat([st.session_state['df_main'], df_new], ignore_index=True)
-            save_data(st.session_state['df_main']); st.rerun()
+            save_data(st.session_state['df_main'], factor_hht); st.rerun()
 
     st.markdown("---")
     def to_excel(df):
@@ -167,7 +181,7 @@ with st.sidebar:
     meta_gestion = st.slider("Meta Gestión (%)", 50, 100, 90)
     metas = {'meta_ta': meta_ta, 'meta_gestion': meta_gestion}
 
-# --- 4. MOTOR PDF EJECUTIVO ---
+# --- 4. MOTOR PDF ---
 class PDF_SST(FPDF):
     def header(self):
         self.set_fill_color(245, 245, 245)
@@ -207,20 +221,17 @@ class PDF_SST(FPDF):
         except: pass
 
     def draw_kpi_circle_pair(self, title, val_m, val_a, max_scale, meta, unit, x, y):
-        # Crear gráfico doble (Mes | Acumulado)
         try:
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(4, 2))
             
-            # Configurar anillo Mes
-            color_m = '#4CAF50' if val_m <= meta else '#F44336' # Menos es mejor (Accidentabilidad)
-            if "Gest" in title: color_m = '#4CAF50' if val_m >= meta else '#F44336' # Más es mejor (Gestión)
+            color_m = '#4CAF50' if val_m <= meta else '#F44336' 
+            if "Gest" in title: color_m = '#4CAF50' if val_m >= meta else '#F44336'
             
             val_m_plot = min(val_m, max_scale); rem_m = max_scale - val_m_plot
             ax1.pie([val_m_plot, rem_m], colors=[color_m, '#EEEEEE'], startangle=90, counterclock=False, wedgeprops=dict(width=0.3, edgecolor='white'))
             ax1.text(0, 0, f"{val_m:.1f}\n{unit}", ha='center', va='center', fontsize=10, fontweight='bold')
             ax1.set_title("MENSUAL", fontsize=8, color='#555555')
 
-            # Configurar anillo Acumulado
             color_a = '#4CAF50' if val_a <= meta else '#F44336'
             if "Gest" in title: color_a = '#4CAF50' if val_a >= meta else '#F44336'
             
@@ -229,20 +240,17 @@ class PDF_SST(FPDF):
             ax2.text(0, 0, f"{val_a:.1f}\n{unit}", ha='center', va='center', fontsize=10, fontweight='bold')
             ax2.set_title("ACUMULADO", fontsize=8, color='#555555')
 
-            # Guardar
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 plt.savefig(tmp.name, format='png', bbox_inches='tight', dpi=100)
                 tmp_name = tmp.name
             plt.close(fig)
             
-            # Marco y Título
             self.set_xy(x, y)
             self.set_font('Arial', 'B', 9)
             self.cell(90, 8, title, 0, 1, 'C')
             self.image(tmp_name, x=x+5, y=y+8, w=80, h=40)
             os.unlink(tmp_name)
-            
-        except Exception as e: pass
+        except: pass
 
     def clean_text(self, text):
         replacements = {'\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"', '\u2022': '*', '€': 'EUR'}
@@ -252,8 +260,7 @@ class PDF_SST(FPDF):
     def footer_signatures(self):
         y_pos = self.get_y() + 10
         if y_pos > 250:
-            self.add_page()
-            y_pos = self.get_y() + 20
+            self.add_page(); y_pos = self.get_y() + 20
         self.set_y(y_pos)
         self.line(20, y_pos, 90, y_pos)
         self.set_xy(20, y_pos + 2); self.set_font('Arial', 'B', 9); self.set_text_color(0,0,0)
@@ -269,21 +276,15 @@ class PDF_SST(FPDF):
         self.multi_cell(0, 4, "Este documento es parte integrante del SGSST. Confidencial.", 0, 'C')
 
     def draw_detailed_stats_table(self, data_list):
-        """Dibuja la Tabla Maestra de Indicadores"""
         self.set_font('Arial', 'B', 9)
-        self.set_fill_color(230, 230, 230)
-        self.set_text_color(0, 0, 0)
-        
-        # Headers
+        self.set_fill_color(230, 230, 230); self.set_text_color(0, 0, 0)
         self.cell(100, 8, "INDICADOR (DS 67 / DS 40)", 1, 0, 'L', 1)
         self.cell(45, 8, "MES ACTUAL", 1, 0, 'C', 1)
         self.cell(45, 8, "ACUMULADO ANUAL", 1, 1, 'C', 1)
-        
         self.set_font('Arial', '', 9)
         for label, val_m, val_a, is_bold in data_list:
             if is_bold: self.set_font('Arial', 'B', 9)
             else: self.set_font('Arial', '', 9)
-            
             self.ln()
             self.cell(100, 7, f" {label}", 1, 0, 'L')
             self.cell(45, 7, str(val_m), 1, 0, 'C')
@@ -302,7 +303,7 @@ with tab_dash:
         if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, width=160)
     with c2:
         st.title("SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA")
-        st.markdown("### 🛡️ CONTROL DE MANDO EJECUTIVO (SGSST)")
+        st.markdown(f"### 🛡️ CONTROL DE MANDO EJECUTIVO (Factor HHT: {factor_hht})")
 
     col_y, col_m = st.columns(2)
     sel_year = col_y.selectbox("Año Fiscal", years)
@@ -320,7 +321,6 @@ with tab_dash:
     idx_corte = MESES_ORDEN.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
     
-    # Acumulados Absolutos
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_fatales = df_acum['Accidentes Fatales'].sum()
     sum_ep = df_acum['Enf. Profesionales'].sum()
@@ -330,20 +330,15 @@ with tab_dash:
     sum_indemnizados = df_acum['Indemnizados'].sum()
     sum_hht = df_acum['HHT'].sum()
     
-    # Promedios
     df_masa_ok = df_acum[df_acum['Masa Laboral'] > 0]
     avg_masa = df_masa_ok['Masa Laboral'].mean() if not df_masa_ok.empty else 0
 
-    # Tasas Acumuladas
     ta_acum = (sum_acc / avg_masa * 100) if avg_masa > 0 else 0
-    ts_acum = (sum_dias_acc / avg_masa * 100) if avg_masa > 0 else 0 # Siniestralidad Temporal
+    ts_acum = (sum_dias_acc / avg_masa * 100) if avg_masa > 0 else 0 
     if_acum = (sum_acc * 1000000 / sum_hht) if sum_hht > 0 else 0
-    
-    # Factor Siniestralidad Inv/Muerte (Simulado con Días Cargo, lo usual para DS67)
     sum_dias_cargo = df_acum['Días Cargo'].sum()
     ig_acum = ((sum_dias_acc + sum_dias_cargo) * 1000000 / sum_hht) if sum_hht > 0 else 0
     
-    # Gestión
     def safe_div(a, b): return (a/b*100) if b > 0 else 0
     p_insp = safe_div(row_mes['Insp. Ejecutadas'], row_mes['Insp. Programadas'])
     p_cap = safe_div(row_mes['Cap. Ejecutadas'], row_mes['Cap. Programadas'])
@@ -369,14 +364,14 @@ with tab_dash:
 
     with col_g1: st.plotly_chart(plot_gauge(ta_acum, "Tasa Acc. Acum", 8, metas['meta_ta'], True), use_container_width=True)
     with col_g2: st.plotly_chart(plot_gauge(ts_acum, "Tasa Sin. Acum", 50, 10, True), use_container_width=True)
-    with col_g3: st.plotly_chart(plot_gauge(if_acum, "Ind. Frecuencia", 50, 10, True), use_container_width=True)
+    with col_g3: st.plotly_chart(plot_gauge(if_acum, "Ind. Frec. Acum", 50, 10, True), use_container_width=True)
     
     with col_g4:
         st.markdown("<br>", unsafe_allow_html=True)
         st.metric("Total Accidentes (Año)", int(sum_acc))
         st.metric("Promedio Trabajadores", f"{avg_masa:.1f}")
 
-    # TABLA MAESTRA COMPLETA (LO QUE PEDISTE)
+    # TABLA MAESTRA COMPLETA
     st.markdown("---")
     st.markdown("#### 📋 LISTADO MAESTRO DE INDICADORES (DS67)")
     
@@ -592,7 +587,7 @@ with tab_editor:
                 df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
                 df.at[row_idx, 'Observaciones'] = val_obs
                 
-                st.session_state['df_main'] = save_data(df)
+                st.session_state['df_main'] = save_data(df, factor_hht)
                 st.success("Guardado.")
                 st.rerun()
     except Exception as e:
