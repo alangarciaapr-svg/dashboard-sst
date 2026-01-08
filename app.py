@@ -18,7 +18,7 @@ matplotlib.use('Agg')
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v24.csv"
+CSV_FILE = "base_datos_galvez_v26.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -57,7 +57,7 @@ def inicializar_db_completa():
     df_26 = get_structure_for_year(2026)
     return pd.concat([df_24, df_25, df_26], ignore_index=True)
 
-def procesar_datos(df, factor_base=180):
+def procesar_datos(df, factor_base=210):
     # Limpieza de tipos
     cols_exclude = ['Año', 'Mes', 'Observaciones']
     for col in df.columns:
@@ -68,8 +68,8 @@ def procesar_datos(df, factor_base=180):
     if 'Observaciones' not in df.columns: df['Observaciones'] = ""
     df['Observaciones'] = df['Observaciones'].fillna("").astype(str)
 
-    # CÁLCULOS CRÍTICOS (HHT)
-    # Fórmula: (Trabajadores * FACTOR) + Extras - Ausentismo
+    # CÁLCULOS CRÍTICOS (HHT BASE 210)
+    # Fórmula Mutual: (Trabajadores * 210) + Extras - Ausentismo
     df['HHT'] = (df['Masa Laboral'] * factor_base) + df['Horas Extras'] - df['Horas Ausentismo']
     df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 0)
     
@@ -102,8 +102,8 @@ def load_data():
                 if col not in df.columns:
                     if col == 'Observaciones': df[col] = ""
                     else: df[col] = 0.0
-            # NOTA: Procesamos con factor 180 por defecto al cargar, pero la UI lo actualizará
-            return procesar_datos(df[ref_df.columns])
+            # Se procesa inicialmente con 210, luego la UI lo actualiza si cambia
+            return procesar_datos(df[ref_df.columns], 210)
         except: return inicializar_db_completa()
     return inicializar_db_completa()
 
@@ -118,7 +118,7 @@ def save_data(df, factor_base):
 def generar_insight_automatico(row_mes, ta_acum, metas):
     insights = []
     if ta_acum > metas['meta_ta']:
-        insights.append(f"⚠️ <b>ALERTA CRÍTICA:</b> Tasa Acumulada ({ta_acum:.2f}%) excede la meta ({metas['meta_ta']}%)")
+        insights.append(f"⚠️ <b>ALERTA:</b> Tasa Acumulada ({ta_acum:.2f}%) excede meta ({metas['meta_ta']}%)")
     elif ta_acum > (metas['meta_ta'] * 0.8):
         insights.append(f"🔸 <b>PRECAUCIÓN:</b> Tasa Acumulada al límite.")
     else:
@@ -143,13 +143,13 @@ with st.sidebar:
     if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, use_container_width=True)
 
     st.markdown("---")
-    st.markdown("### ⚙️ Configuración Cálculo")
+    st.markdown("### ⚙️ Factor HHT (Mutual)")
     
-    # FACTOR HHT CONFIGURABLE
-    factor_hht = st.number_input("Factor Horas Base (Mensual)", value=180, 
-                                 help="Ej: 180 (45hrs), 176 (44hrs), 160 (40hrs). Se multiplica por el N° de Trabajadores.")
+    # FACTOR HHT CONFIGURABLE (Defecto 210)
+    factor_hht = st.number_input("Horas Base por Trabajador", value=210, 
+                                 help="Estándar Mutual: 210. Ley 40hrs: 160 aprox.")
     
-    # Recalcular en tiempo real si cambia el factor
+    # Recalcular en tiempo real
     if 'factor_hht_cache' not in st.session_state or st.session_state['factor_hht_cache'] != factor_hht:
         st.session_state['df_main'] = procesar_datos(st.session_state['df_main'], factor_hht)
         st.session_state['factor_hht_cache'] = factor_hht
@@ -181,7 +181,7 @@ with st.sidebar:
     meta_gestion = st.slider("Meta Gestión (%)", 50, 100, 90)
     metas = {'meta_ta': meta_ta, 'meta_gestion': meta_gestion}
 
-# --- 4. MOTOR PDF ---
+# --- 4. MOTOR PDF EJECUTIVO ---
 class PDF_SST(FPDF):
     def header(self):
         self.set_fill_color(245, 245, 245)
@@ -226,7 +226,6 @@ class PDF_SST(FPDF):
             
             color_m = '#4CAF50' if val_m <= meta else '#F44336' 
             if "Gest" in title: color_m = '#4CAF50' if val_m >= meta else '#F44336'
-            
             val_m_plot = min(val_m, max_scale); rem_m = max_scale - val_m_plot
             ax1.pie([val_m_plot, rem_m], colors=[color_m, '#EEEEEE'], startangle=90, counterclock=False, wedgeprops=dict(width=0.3, edgecolor='white'))
             ax1.text(0, 0, f"{val_m:.1f}\n{unit}", ha='center', va='center', fontsize=10, fontweight='bold')
@@ -234,7 +233,6 @@ class PDF_SST(FPDF):
 
             color_a = '#4CAF50' if val_a <= meta else '#F44336'
             if "Gest" in title: color_a = '#4CAF50' if val_a >= meta else '#F44336'
-            
             val_a_plot = min(val_a, max_scale); rem_a = max_scale - val_a_plot
             ax2.pie([val_a_plot, rem_a], colors=[color_a, '#EEEEEE'], startangle=90, counterclock=False, wedgeprops=dict(width=0.3, edgecolor='white'))
             ax2.text(0, 0, f"{val_a:.1f}\n{unit}", ha='center', va='center', fontsize=10, fontweight='bold')
@@ -244,9 +242,7 @@ class PDF_SST(FPDF):
                 plt.savefig(tmp.name, format='png', bbox_inches='tight', dpi=100)
                 tmp_name = tmp.name
             plt.close(fig)
-            
-            self.set_xy(x, y)
-            self.set_font('Arial', 'B', 9)
+            self.set_xy(x, y); self.set_font('Arial', 'B', 9)
             self.cell(90, 8, title, 0, 1, 'C')
             self.image(tmp_name, x=x+5, y=y+8, w=80, h=40)
             os.unlink(tmp_name)
@@ -303,7 +299,7 @@ with tab_dash:
         if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, width=160)
     with c2:
         st.title("SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA")
-        st.markdown(f"### 🛡️ CONTROL DE MANDO EJECUTIVO (Factor HHT: {factor_hht})")
+        st.markdown(f"### 🛡️ CONTROL DE MANDO EJECUTIVO (Base HHT: {factor_hht})")
 
     col_y, col_m = st.columns(2)
     sel_year = col_y.selectbox("Año Fiscal", years)
@@ -349,10 +345,6 @@ with tab_dash:
     st.info("💡 **ANÁLISIS INTELIGENTE DEL SISTEMA:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     
-    # VISUALIZACIÓN DASHBOARD
-    st.markdown("---")
-    st.markdown(f"#### 📊 TABLERO VISUAL (MES vs ACUMULADO)")
-    
     col_g1, col_g2, col_g3, col_g4 = st.columns(4)
     def plot_gauge(value, title, max_val, threshold, inverse=False):
         colors = {'good': '#2E7D32', 'bad': '#C62828'}
@@ -368,10 +360,9 @@ with tab_dash:
     
     with col_g4:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.metric("Total Accidentes (Año)", int(sum_acc))
-        st.metric("Promedio Trabajadores", f"{avg_masa:.1f}")
+        st.metric("Total HHT (Año)", f"{int(sum_hht):,}".replace(",", "."))
+        st.caption(f"Calculado con Factor {factor_hht}")
 
-    # TABLA MAESTRA COMPLETA
     st.markdown("---")
     st.markdown("#### 📋 LISTADO MAESTRO DE INDICADORES (DS67)")
     
@@ -427,23 +418,17 @@ with tab_dash:
             pdf.add_page(); pdf.set_font('Arial', 'B', 12)
             pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'R')
             
-            # --- SECCIÓN VISUAL (KPIS CIRCULARES) ---
             pdf.section_title("1. INDICADORES VISUALES (MES vs ACUMULADO)")
-            
             y_start = pdf.get_y()
             pdf.draw_kpi_circle_pair("TASA ACCIDENTABILIDAD", row_mes['Tasa Acc.'], ta_acum, 8, metas['meta_ta'], "%", 10, y_start)
             pdf.draw_kpi_circle_pair("TASA SINIESTRALIDAD", row_mes['Tasa Sin.'], ts_acum, 50, 10, "Dias", 110, y_start)
-            
             y_start += 55
             pdf.draw_kpi_circle_pair("TASA FRECUENCIA", row_mes['Indice Frec.'], if_acum, 50, 10, "IF", 10, y_start)
             pdf.draw_kpi_circle_pair("TASA GRAVEDAD", row_mes['Indice Grav.'], ig_acum, 200, 50, "IG", 110, y_start)
-            
             pdf.set_y(y_start + 60)
             
-            # --- TABLA MAESTRA COMPLETA ---
             pdf.section_title("2. ESTADÍSTICA DE SINIESTRALIDAD (DS 67)")
             pdf.ln(2)
-            
             table_rows = [
                 ("Nro de Accidentes CTP", int(row_mes['Accidentes CTP']), int(sum_acc), False),
                 ("Nro de Enfermedades Profesionales", int(row_mes['Enf. Profesionales']), int(sum_ep), False),
@@ -460,13 +445,9 @@ with tab_dash:
                 ("Tasa de Gravedad", f"{row_mes['Indice Grav.']:.0f}", f"{ig_acum:.0f}", True),
                 ("Horas Hombre (HHT)", int(row_mes['HHT']), int(sum_hht), False)
             ]
-            
             pdf.draw_detailed_stats_table(table_rows)
             
-            # PÁGINA 2
             pdf.add_page()
-            
-            # GESTIÓN (Gráficos)
             pdf.section_title("3. CUMPLIMIENTO PROGRAMA GESTIÓN")
             insp_txt = f"{int(row_mes['Insp. Ejecutadas'])} de {int(row_mes['Insp. Programadas'])}"
             cap_txt = f"{int(row_mes['Cap. Ejecutadas'])} de {int(row_mes['Cap. Programadas'])}"
@@ -494,8 +475,7 @@ with tab_dash:
             clean_obs = pdf.clean_text(obs_raw)
             pdf.multi_cell(0, 6, f"ANALISIS SISTEMA:\n{clean_insight}\n\nCOMENTARIOS EXPERTO:\n{clean_obs}", 1, 'L')
             
-            pdf.ln(20)
-            pdf.footer_signatures()
+            pdf.ln(20); pdf.footer_signatures()
             
             out = pdf.output(dest='S').encode('latin-1')
             st.download_button("📥 Descargar Reporte Ejecutivo", out, f"Reporte_SST_{sel_month}.pdf", "application/pdf")
@@ -514,46 +494,47 @@ with tab_editor:
         with st.form("edit_form"):
             st.info(f"Editando: **{edit_month} {edit_year}**")
             
-            # SECCIÓN 1: DATOS BASE
             st.markdown("##### 🏭 Datos Base")
             c1, c2, c3 = st.columns(3)
-            val_masa = c1.number_input("Promedio Trabajadores", value=float(df.at[row_idx, 'Masa Laboral']))
+            val_masa = c1.number_input("Nº Trabajadores", value=float(df.at[row_idx, 'Masa Laboral']))
             val_extras = c2.number_input("Horas Extras", value=float(df.at[row_idx, 'Horas Extras']))
             val_aus = c3.number_input("Horas Ausentismo", value=float(df.at[row_idx, 'Horas Ausentismo']))
-
-            # SECCIÓN 2: SINIESTRALIDAD
-            st.markdown("##### 🚑 Siniestralidad (DS 67)")
-            c4, c5, c6 = st.columns(3)
-            val_acc = c4.number_input("Nº Accidentes CTP", value=float(df.at[row_idx, 'Accidentes CTP']))
-            val_dias = c5.number_input("Días Perdidos (Acc)", value=float(df.at[row_idx, 'Días Perdidos']))
-            val_fatales = c6.number_input("Nº Accidentes Fatales", value=float(df.at[row_idx, 'Accidentes Fatales']))
             
-            c7, c8, c9 = st.columns(3)
-            val_ep = c7.number_input("Nº Enf. Profesionales", value=float(df.at[row_idx, 'Enf. Profesionales']))
-            val_dias_ep = c8.number_input("Días Perdidos (EP)", value=float(df.at[row_idx, 'Días Perdidos EP']))
-            val_cargo = c9.number_input("Días Cargo (Inv/Muerte)", value=float(df.at[row_idx, 'Días Cargo']))
-            
-            c10, c11 = st.columns(2)
-            val_pen = c10.number_input("Nº Pensionados", value=float(df.at[row_idx, 'Pensionados']))
-            val_ind = c11.number_input("Nº Indemnizados", value=float(df.at[row_idx, 'Indemnizados']))
+            # SHOW HHT PREVIEW
+            hht_prev = (val_masa * factor_hht) + val_extras - val_aus
+            st.caption(f"HHT Estimadas (Factor {factor_hht}): {hht_prev:,.0f}")
 
-            # SECCIÓN 3: GESTIÓN
-            st.markdown("##### 📋 Gestión")
+            st.markdown("##### 🚑 Siniestralidad")
+            c6, c7, c8 = st.columns(3)
+            val_acc = c6.number_input("Nº Accidentes CTP", value=float(df.at[row_idx, 'Accidentes CTP']))
+            val_dias = c7.number_input("Días Perdidos (Acc)", value=float(df.at[row_idx, 'Días Perdidos']))
+            val_fatales = c8.number_input("Nº Accidentes Fatales", value=float(df.at[row_idx, 'Accidentes Fatales']))
+            
+            c9, c10, c11 = st.columns(3)
+            val_ep = c9.number_input("Nº Enf. Profesionales", value=float(df.at[row_idx, 'Enf. Profesionales']))
+            val_dias_ep = c10.number_input("Días Perdidos (EP)", value=float(df.at[row_idx, 'Días Perdidos EP']))
+            val_cargo = c11.number_input("Días Cargo (Inv/Muerte)", value=float(df.at[row_idx, 'Días Cargo']))
+            
             c12, c13 = st.columns(2)
-            val_insp_p = c12.number_input("Insp. Programadas", value=float(df.at[row_idx, 'Insp. Programadas']))
-            val_insp_e = c13.number_input("Insp. Ejecutadas", value=float(df.at[row_idx, 'Insp. Ejecutadas']))
-            
+            val_pen = c12.number_input("Nº Pensionados", value=float(df.at[row_idx, 'Pensionados']))
+            val_ind = c13.number_input("Nº Indemnizados", value=float(df.at[row_idx, 'Indemnizados']))
+
+            st.markdown("##### 📋 Gestión")
             c14, c15 = st.columns(2)
-            val_cap_p = c14.number_input("Cap. Programadas", value=float(df.at[row_idx, 'Cap. Programadas']))
-            val_cap_e = c15.number_input("Cap. Ejecutadas", value=float(df.at[row_idx, 'Cap. Ejecutadas']))
+            val_insp_p = c14.number_input("Insp. Programadas", value=float(df.at[row_idx, 'Insp. Programadas']))
+            val_insp_e = c15.number_input("Insp. Ejecutadas", value=float(df.at[row_idx, 'Insp. Ejecutadas']))
             
             c16, c17 = st.columns(2)
-            val_med_ab = c16.number_input("Hallazgos Abiertos", value=float(df.at[row_idx, 'Medidas Abiertas']))
-            val_med_ce = c17.number_input("Hallazgos Cerrados", value=float(df.at[row_idx, 'Medidas Cerradas']))
+            val_cap_p = c16.number_input("Cap. Programadas", value=float(df.at[row_idx, 'Cap. Programadas']))
+            val_cap_e = c17.number_input("Cap. Ejecutadas", value=float(df.at[row_idx, 'Cap. Ejecutadas']))
             
             c18, c19 = st.columns(2)
-            val_exp = c18.number_input("Expuestos (Silice/Ruido)", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
-            val_vig = c19.number_input("Vigilancia Salud Vigente", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
+            val_med_ab = c18.number_input("Hallazgos Abiertos", value=float(df.at[row_idx, 'Medidas Abiertas']))
+            val_med_ce = c19.number_input("Hallazgos Cerrados", value=float(df.at[row_idx, 'Medidas Cerradas']))
+            
+            c20, c21 = st.columns(2)
+            val_exp = c20.number_input("Expuestos (Silice/Ruido)", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
+            val_vig = c21.number_input("Vigilancia Salud Vigente", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
 
             st.markdown("##### 📝 Observaciones")
             c_obs = str(df.at[row_idx, 'Observaciones'])
