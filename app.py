@@ -251,8 +251,7 @@ with tab_dash:
     a4.metric("I. Grav. Acumulado", f"{ig_acum:.0f}")
 
     st.markdown("#### 📋 Gestión")
-    # --- AQUÍ ESTABA EL ERROR ANTERIOR ---
-    g1, g2, g3, g4 = st.columns(4) # Definición explicita de columnas antes de usarlas
+    g1, g2, g3, g4 = st.columns(4)
     
     def donut(val, title, col_obj):
         color = "#66BB6A" if val >= metas['meta_gestion'] else "#EF5350"
@@ -285,13 +284,42 @@ with tab_dash:
             pdf.ln(5)
             
             pdf.section_title("2. GESTIÓN OPERATIVA")
-            data_gest = [("Inspecciones", p_insp), ("Capacitaciones", p_cap), ("Cierre Hallazgos", p_medidas), ("Salud Ocup.", p_salud)]
-            for l, v in data_gest:
-                pdf.cell(80, 8, l, 0); x=pdf.get_x(); y=pdf.get_y()
-                pdf.set_fill_color(230); pdf.rect(x, y+2, 80, 4, 'F')
-                pdf.set_fill_color(76, 175, 80) if v >= metas['meta_gestion'] else pdf.set_fill_color(244, 67, 54)
-                pdf.rect(x, y+2, (v/100)*80, 4, 'F')
-                pdf.set_x(x+85); pdf.cell(20, 8, f"{v:.0f}%", 0, 1)
+            
+            # --- MODIFICACIÓN: Mostrar "X de Y" ---
+            # Preparamos los datos con el formato texto
+            insp_txt = f"{int(row_mes['Insp. Ejecutadas'])} de {int(row_mes['Insp. Programadas'])}"
+            cap_txt = f"{int(row_mes['Cap. Ejecutadas'])} de {int(row_mes['Cap. Programadas'])}"
+            med_txt = f"{int(row_mes['Medidas Cerradas'])} de {int(row_mes['Medidas Abiertas'])}"
+            salud_txt = f"{int(row_mes['Vig. Salud Vigente'])} de {int(row_mes['Expuestos Silice/Ruido'])}"
+            
+            data_gest = [
+                ("Inspecciones", p_insp, insp_txt), 
+                ("Capacitaciones", p_cap, cap_txt),
+                ("Cierre Hallazgos", p_medidas, med_txt), 
+                ("Salud Ocup.", p_salud, salud_txt)
+            ]
+            
+            for label, val, txt_detail in data_gest:
+                pdf.cell(60, 8, label, 0)
+                
+                # Barra
+                x = pdf.get_x(); y = pdf.get_y()
+                pdf.set_fill_color(230); pdf.rect(x, y+2, 60, 4, 'F')
+                pdf.set_fill_color(76, 175, 80) if val >= metas['meta_gestion'] else pdf.set_fill_color(244, 67, 54)
+                w_bar = (val/100)*60 if val <= 100 else 60
+                pdf.rect(x, y+2, w_bar, 4, 'F')
+                
+                # Texto Porcentaje
+                pdf.set_x(x + 65)
+                pdf.cell(15, 8, f"{val:.0f}%", 0, 0)
+                
+                # Texto Detalle (X de Y)
+                pdf.set_font('Arial', 'I', 8)
+                pdf.set_text_color(100)
+                pdf.cell(30, 8, f"({txt_detail})", 0, 1)
+                
+                # Reset fuente
+                pdf.set_font('Arial', '', 10); pdf.set_text_color(0)
 
             pdf.ln(5); pdf.section_title("3. OBSERVACIONES")
             pdf.set_font('Arial', '', 10); pdf.set_draw_color(100)
@@ -338,40 +366,4 @@ with tab_editor:
                 val_dias = st.number_input("Días Perdidos", value=float(df.at[row_idx, 'Días Perdidos']))
                 val_cargo = st.number_input("Días Cargo", value=float(df.at[row_idx, 'Días Cargo']))
             with col_e3:
-                st.markdown("##### 📋 Gestión")
-                val_insp_p = st.number_input("Insp. Prog", value=float(df.at[row_idx, 'Insp. Programadas']))
-                val_insp_e = st.number_input("Insp. Ejec", value=float(df.at[row_idx, 'Insp. Ejecutadas']))
-                val_cap_p = st.number_input("Cap. Prog", value=float(df.at[row_idx, 'Cap. Programadas']))
-                val_cap_e = st.number_input("Cap. Ejec", value=float(df.at[row_idx, 'Cap. Ejecutadas']))
-                val_med_ab = st.number_input("Hallazgos", value=float(df.at[row_idx, 'Medidas Abiertas']))
-                val_med_ce = st.number_input("Cerrados", value=float(df.at[row_idx, 'Medidas Cerradas']))
-                val_exp = st.number_input("Expuestos", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
-                val_vig = st.number_input("Vigilancia", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
-
-            st.markdown("##### 📝 Observaciones")
-            c_obs = str(df.at[row_idx, 'Observaciones'])
-            if c_obs.lower() in ["nan", "none", "0", ""]: c_obs = ""
-            val_obs = st.text_area("Texto del Reporte:", value=c_obs, height=100)
-
-            if st.form_submit_button("💾 GUARDAR CAMBIOS"):
-                df.at[row_idx, 'Masa Laboral'] = val_masa
-                df.at[row_idx, 'Horas Extras'] = val_extras
-                df.at[row_idx, 'Horas Ausentismo'] = val_aus
-                df.at[row_idx, 'Accidentes CTP'] = val_acc
-                df.at[row_idx, 'Días Perdidos'] = val_dias
-                df.at[row_idx, 'Días Cargo'] = val_cargo
-                df.at[row_idx, 'Insp. Programadas'] = val_insp_p
-                df.at[row_idx, 'Insp. Ejecutadas'] = val_insp_e
-                df.at[row_idx, 'Cap. Programadas'] = val_cap_p
-                df.at[row_idx, 'Cap. Ejecutadas'] = val_cap_e
-                df.at[row_idx, 'Medidas Abiertas'] = val_med_ab
-                df.at[row_idx, 'Medidas Cerradas'] = val_med_ce
-                df.at[row_idx, 'Expuestos Silice/Ruido'] = val_exp
-                df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
-                df.at[row_idx, 'Observaciones'] = val_obs
-                
-                st.session_state['df_main'] = save_data(df)
-                st.success("Guardado.")
-                st.rerun()
-    except Exception as e:
-        st.error(f"Error al cargar registro: {e}")
+                st.
