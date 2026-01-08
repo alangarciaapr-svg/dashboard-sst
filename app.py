@@ -11,14 +11,14 @@ import matplotlib
 import tempfile
 import numpy as np
 
-# Configuración Matplotlib
+# Configuración Matplotlib para servidor
 matplotlib.use('Agg')
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v19.csv"
+CSV_FILE = "base_datos_galvez_v20.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -190,9 +190,9 @@ class PDF_SST(FPDF):
     def section_title(self, title):
         self.set_font('Arial', 'B', 12)
         self.set_fill_color(*COLOR_SECONDARY)
-        self.set_text_color(255, 255, 255) # ESTO PONE LA TINTA EN BLANCO
+        self.set_text_color(255, 255, 255)
         self.cell(0, 8, f"  {title}", 0, 1, 'L', 1)
-        self.set_text_color(0, 0, 0) # BUGFIX: RESTAURAR TINTA NEGRA
+        self.set_text_color(0, 0, 0)
         self.ln(4)
 
     def kpi_card_color(self, label, value, unit, x, y, w, h, is_good):
@@ -217,7 +217,7 @@ class PDF_SST(FPDF):
         self.set_xy(x+2, y+20)
         self.set_font('Arial', '', 7)
         self.cell(w-5, 4, unit, 0, 1, 'C')
-        self.set_text_color(0, 0, 0) # Reset
+        self.set_text_color(0, 0, 0)
 
     def draw_trend_chart(self, df_hist, x, y, w, h):
         try:
@@ -263,29 +263,17 @@ class PDF_SST(FPDF):
             self.add_page()
             y_pos = self.get_y() + 20
         self.set_y(y_pos)
-        
-        # Firma Gerente
         self.line(20, y_pos, 90, y_pos)
-        self.set_xy(20, y_pos + 2)
-        self.set_font('Arial', 'B', 9)
-        self.set_text_color(0, 0, 0) # Asegurar Negro
+        self.set_xy(20, y_pos + 2); self.set_font('Arial', 'B', 9); self.set_text_color(0, 0, 0)
         self.cell(70, 5, "RODRIGO GALVEZ REBOLLEDO", 0, 1, 'C')
-        self.set_xy(20, y_pos + 7)
-        self.set_font('Arial', '', 8)
+        self.set_xy(20, y_pos + 7); self.set_font('Arial', '', 8)
         self.cell(70, 5, "Gerente General / Rep. Legal", 0, 1, 'C')
-        
-        # Firma Experto
         self.line(120, y_pos, 190, y_pos)
-        self.set_xy(120, y_pos + 2)
-        self.set_font('Arial', 'B', 9)
+        self.set_xy(120, y_pos + 2); self.set_font('Arial', 'B', 9)
         self.cell(70, 5, "ALAN GARCIA VIDAL", 0, 1, 'C')
-        self.set_xy(120, y_pos + 7)
-        self.set_font('Arial', '', 8)
+        self.set_xy(120, y_pos + 7); self.set_font('Arial', '', 8)
         self.cell(70, 5, "Ingeniero en Prevención de Riesgos", 0, 1, 'C')
-        
-        self.ln(15)
-        self.set_font('Arial', 'I', 7)
-        self.set_text_color(128)
+        self.ln(15); self.set_font('Arial', 'I', 7); self.set_text_color(128)
         self.multi_cell(0, 4, "Este documento es parte integrante del SGSST. Confidencial.", 0, 'C')
 
 # --- 5. DASHBOARD ---
@@ -314,6 +302,7 @@ with tab_dash:
     if not months_avail: st.warning("Sin datos."); st.stop()
     sel_month = col_m.selectbox("Mes de Corte", months_avail, index=len(months_avail)-1 if months_avail else 0)
     
+    # CÁLCULOS
     row_mes = df_year[df_year['Mes'] == sel_month].iloc[0]
     idx_corte = MESES_ORDEN.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
@@ -339,8 +328,23 @@ with tab_dash:
     st.info("💡 **ANÁLISIS INTELIGENTE DEL SISTEMA:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     
+    # ----------------------------------------------------
+    # SECCIÓN 1: FOTO DEL MES (MENSUAL)
+    # ----------------------------------------------------
     st.markdown("---")
-    st.markdown(f"#### 🚀 DESEMPEÑO ACUMULADO")
+    st.markdown(f"#### 🔵 FOTO DEL MES: {sel_month.upper()}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Tasa Accidentabilidad (Mes)", f"{row_mes['Tasa Acc.']:.2f}%")
+    k2.metric("Tasa Siniestralidad (Mes)", f"{row_mes['Tasa Sin.']:.2f}")
+    k3.metric("Indice Frecuencia (Mes)", f"{row_mes['Indice Frec.']:.2f}")
+    k4.metric("Indice Gravedad (Mes)", f"{row_mes['Indice Grav.']:.0f}")
+
+    # ----------------------------------------------------
+    # SECCIÓN 2: TENDENCIA ACUMULADA (ANUAL)
+    # ----------------------------------------------------
+    st.markdown("---")
+    st.markdown(f"#### 🚀 TENDENCIA ACUMULADA (A LA FECHA)")
+    
     col_g1, col_g2, col_g3, col_g4 = st.columns(4)
     def plot_gauge(value, title, max_val, threshold, inverse=False):
         colors = {'good': '#2E7D32', 'bad': '#C62828'}
@@ -350,18 +354,48 @@ with tab_dash:
         fig.update_layout(height=200, margin=dict(t=30,b=10,l=20,r=20))
         return fig
 
-    with col_g1: st.plotly_chart(plot_gauge(ta_acum, "Tasa Acc. Acum", 8, metas['meta_ta'], True), use_container_width=True)
-    with col_g2: st.plotly_chart(plot_gauge(ts_acum, "Tasa Sin. Acum", 50, 10, True), use_container_width=True)
-    with col_g3: st.plotly_chart(plot_gauge(if_acum, "Ind. Frecuencia", 50, 10, True), use_container_width=True)
+    with col_g1: st.plotly_chart(plot_gauge(ta_acum, "T. Acc. Acumulada", 8, metas['meta_ta'], True), use_container_width=True)
+    with col_g2: st.plotly_chart(plot_gauge(ts_acum, "T. Sin. Acumulada", 50, 10, True), use_container_width=True)
+    with col_g3: st.plotly_chart(plot_gauge(if_acum, "I. Frec. Acumulado", 50, 10, True), use_container_width=True)
     
     meses_transcurridos = idx_corte + 1
     proyeccion = int((sum_acc / meses_transcurridos) * 12) if meses_transcurridos > 0 else 0
     with col_g4:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.metric("Total Accidentes", int(sum_acc))
-        st.metric("Proyección Año", proyeccion, delta=f"{proyeccion - int(sum_acc)} estimados", delta_color="inverse")
+        st.metric("Total Accidentes (Año)", int(sum_acc))
+        st.metric("Proyección Cierre Año", proyeccion, delta=f"{proyeccion - int(sum_acc)} estimados", delta_color="inverse")
 
+    # ----------------------------------------------------
+    # SECCIÓN 3: TABLA COMPARATIVA DIRECTA
+    # ----------------------------------------------------
     st.markdown("---")
+    st.markdown("#### ⚖️ COMPARATIVO: MENSUAL vs ACUMULADO")
+    
+    # Crear DataFrame para la visualización
+    comp_data = {
+        'INDICADOR': ['Tasa de Accidentabilidad (%)', 'Tasa de Siniestralidad', 'Índice de Frecuencia', 'Índice de Gravedad'],
+        f'MES ACTUAL ({sel_month})': [
+            f"{row_mes['Tasa Acc.']:.2f}", 
+            f"{row_mes['Tasa Sin.']:.2f}", 
+            f"{row_mes['Indice Frec.']:.2f}", 
+            f"{row_mes['Indice Grav.']:.0f}"
+        ],
+        'ACUMULADO ANUAL': [
+            f"{ta_acum:.2f}", 
+            f"{ts_acum:.2f}", 
+            f"{if_acum:.2f}", 
+            f"{ig_acum:.0f}"
+        ]
+    }
+    df_comp = pd.DataFrame(comp_data)
+    
+    # Estilizar la tabla
+    st.table(df_comp)
+
+    # ----------------------------------------------------
+    # SECCIÓN 4: GESTIÓN
+    # ----------------------------------------------------
+    st.markdown("#### 📋 Gestión Depto SST (Mes)")
     g1, g2, g3, g4 = st.columns(4)
     def donut(val, title, col_obj):
         color = "#66BB6A" if val >= metas['meta_gestion'] else "#EF5350"
@@ -379,10 +413,7 @@ with tab_dash:
     if st.button("📄 Generar Reporte Ejecutivo PDF"):
         try:
             pdf = PDF_SST(orientation='P', format='A4')
-            pdf.add_page()
-            
-            # PÁGINA 1
-            pdf.set_font('Arial', 'B', 10)
+            pdf.add_page(); pdf.set_font('Arial', 'B', 12)
             pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'R')
             
             pdf.section_title("1. INDICADORES CLAVE DE DESEMPEÑO (ACUMULADO)")
@@ -413,25 +444,18 @@ with tab_dash:
                 x_pos = 15 + (i * 48)
                 color_hex = '#4CAF50' if val >= metas['meta_gestion'] else '#F44336'
                 pdf.draw_donut_chart_image(val, color_hex, x_pos, y_circles, size=30)
-                
-                # BUGFIX: Forzar color negro
                 pdf.set_text_color(0, 0, 0)
                 pdf.set_xy(x_pos - 5, y_circles + 32)
                 pdf.set_font('Arial', 'B', 8); pdf.cell(40, 4, label, 0, 1, 'C')
                 pdf.set_xy(x_pos - 5, y_circles + 36)
-                pdf.set_font('Arial', '', 7); pdf.set_text_color(100); pdf.cell(40, 4, txt, 0, 1, 'C')
-                pdf.set_text_color(0)
+                pdf.set_font('Arial', '', 7); pdf.set_text_color(100); pdf.cell(40, 4, txt, 0, 1, 'C'); pdf.set_text_color(0)
 
-            # PÁGINA 2
             pdf.add_page()
             pdf.section_title("4. DETALLE ESTADÍSTICO MENSUAL")
-            pdf.set_fill_color(230); pdf.set_font('Arial', 'B', 8)
-            pdf.set_text_color(0, 0, 0) # BUGFIX: Forzar negro
-            
+            pdf.set_fill_color(230); pdf.set_font('Arial', 'B', 8); pdf.set_text_color(0,0,0)
             cols = [("MES", 25), ("M. LAB", 20), ("ACC", 15), ("DIAS P", 20), ("T. ACC", 20), ("T. SIN", 20), ("I. FREC", 20), ("I. GRAV", 20)]
             for c_name, c_w in cols: pdf.cell(c_w, 6, c_name, 1, 0, 'C', 1)
             pdf.ln()
-            
             pdf.set_font('Arial', '', 8)
             for _, r in df_acum.iterrows():
                 pdf.cell(25, 6, r['Mes'], 1)
@@ -446,15 +470,12 @@ with tab_dash:
 
             pdf.ln(10)
             pdf.section_title("5. OBSERVACIONES DEL EXPERTO")
-            pdf.set_font('Arial', '', 10)
-            pdf.set_text_color(0, 0, 0) # BUGFIX
-            
+            pdf.set_font('Arial', '', 10); pdf.set_text_color(0,0,0)
             obs_raw = str(row_mes['Observaciones'])
             if obs_raw.lower() in ["nan", "none", "0", "0.0", ""]: obs_raw = "Sin observaciones registradas."
             clean_obs = pdf.clean_text(obs_raw)
             pdf.multi_cell(0, 6, clean_obs, 1, 'L')
             
-            # FIRMAS Y LEGAL
             pdf.ln(20)
             pdf.footer_signatures()
             
