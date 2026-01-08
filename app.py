@@ -11,7 +11,7 @@ from io import BytesIO
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v12.csv"
+CSV_FILE = "base_datos_galvez_v13.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -46,17 +46,20 @@ def procesar_datos(df):
     if 'Observaciones' not in df.columns: df['Observaciones'] = ""
     df['Observaciones'] = df['Observaciones'].fillna("").astype(str)
 
-    # Cálculos
+    # CÁLCULO DE HHT (BASE 180)
+    # HHT = (Trabajadores * 180) + Extras - Ausentismo
     df['HHT'] = (df['Masa Laboral'] * 180) + df['Horas Extras'] - df['Horas Ausentismo']
-    df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 1)
     
-    # Masa segura para divisiones
+    # Evitar división por cero o negativos en denominadores
+    df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 1)
     masa_segura = df['Masa Laboral'].apply(lambda x: x if x > 0 else 1)
     
+    # KPIs
     df['Tasa Acc.'] = (df['Accidentes CTP'] / masa_segura) * 100
     df['Tasa Sin.'] = (df['Días Perdidos'] / masa_segura) * 100
     df['Indice Frec.'] = (df['Accidentes CTP'] * 1000000) / df['HHT']
     df['Indice Grav.'] = ((df['Días Perdidos'] + df['Días Cargo']) * 1000000) / df['HHT']
+    
     return df
 
 def load_data():
@@ -84,7 +87,7 @@ def save_data(df):
 def generar_insight_automatico(row_mes, ta_acum, metas):
     insights = []
     if ta_acum > metas['meta_ta']:
-        insights.append(f"⚠️ <b>ALERTA:</b> Tasa Acumulada ({ta_acum:.2f}%) supera la meta ({metas['meta_ta']}%)")
+        insights.append(f"⚠️ <b>ALERTA:</b> Tasa Acumulada ({ta_acum:.2f}%) sobre la meta ({metas['meta_ta']}%)")
     elif ta_acum > (metas['meta_ta'] * 0.8):
         insights.append(f"🔸 <b>PRECAUCIÓN:</b> Tasa Acumulada al límite.")
     else:
@@ -112,8 +115,6 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 📅 Años Fiscales")
-    
-    # Botones de gestión de años
     years_present = st.session_state['df_main']['Año'].unique()
     c_y1, c_y2 = st.columns(2)
     new_year_input = c_y1.number_input("Año", 2000, 2050, 2024)
@@ -128,9 +129,10 @@ with st.sidebar:
     def to_excel(df):
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            # Ordenar columnas para el Excel sea más legible
-            cols = ['Año','Mes'] + [c for c in df.columns if c not in ['Año','Mes']]
-            df[cols].to_excel(writer, index=False, sheet_name='SST_Data')
+            cols = ['Año','Mes','Masa Laboral','Accidentes CTP','Días Perdidos','HHT','Tasa Acc.','Tasa Sin.','Indice Frec.','Observaciones']
+            # Agregar el resto de columnas que falten
+            all_cols = cols + [c for c in df.columns if c not in cols]
+            df[all_cols].to_excel(writer, index=False, sheet_name='SST_Data')
         return output.getvalue()
     
     excel_data = to_excel(st.session_state['df_main'])
@@ -141,23 +143,16 @@ with st.sidebar:
     meta_gestion = st.slider("Meta Gestión (%)", 50, 100, 90)
     metas = {'meta_ta': meta_ta, 'meta_gestion': meta_gestion}
 
-# --- 4. MOTOR PDF MEJORADO ---
+# --- 4. MOTOR PDF ---
 class PDF_SST(FPDF):
     def header(self):
-        # Logo
         if os.path.exists(LOGO_FILE): self.image(LOGO_FILE, 10, 8, 40)
-        
-        # Títulos (Ajustados para no chocar con Logo)
         self.set_xy(55, 12); self.set_font('Arial', 'B', 14)
         self.cell(0, 6, 'SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA', 0, 1, 'L')
-        
         self.set_xy(55, 19); self.set_font('Arial', 'B', 11); self.set_text_color(100)
         self.cell(0, 6, 'SISTEMA DE GESTIÓN EN SST DS44', 0, 1, 'L')
-        
-        # Línea divisoria BAJADA a Y=50 para no tachar logo
         self.set_draw_color(183, 28, 28); self.set_line_width(0.5)
-        self.line(10, 50, 285, 50) 
-        self.ln(25) # Espacio después del header
+        self.line(10, 50, 285, 50); self.ln(25)
 
     def footer(self):
         self.set_y(-15); self.set_font('Arial', 'I', 8); self.set_text_color(128)
@@ -171,11 +166,10 @@ class PDF_SST(FPDF):
         def safe_fmt(val):
             try: return f"{float(val):.2f}"
             except: return "0.00"
-        
         def safe_int(val):
             try: return f"{int(val)}"
             except: return "0"
-
+        
         v_m = safe_int(val_mes) if "N" in unit or "Dias" in unit else safe_fmt(val_mes)
         v_a = safe_int(val_acum) if "N" in unit or "Dias" in unit else safe_fmt(val_acum)
 
@@ -185,13 +179,8 @@ class PDF_SST(FPDF):
         self.set_text_color(0); self.set_font('Arial', 'I', 9); self.cell(40, 8, unit, 1, 1, 'C')
 
     def clean_text(self, text):
-        # Reemplazar caracteres que rompen FPDF latin-1
-        replacements = {
-            '\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'",
-            '\u201c': '"', '\u201d': '"', '\u2022': '*', '€': 'EUR'
-        }
-        for k, v in replacements.items():
-            text = text.replace(k, v)
+        replacements = {'\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"', '\u2022': '*', '€': 'EUR'}
+        for k, v in replacements.items(): text = text.replace(k, v)
         return text.encode('latin-1', 'replace').decode('latin-1')
 
 # --- 5. DASHBOARD ---
@@ -220,7 +209,7 @@ with tab_dash:
     if not months_avail: st.warning("Sin datos."); st.stop()
     sel_month = col_m.selectbox("Mes de Cierre", months_avail, index=len(months_avail)-1 if months_avail else 0)
     
-    # --- CÁLCULOS ROBUSTOS ---
+    # DATOS
     row_mes = df_year[df_year['Mes'] == sel_month].iloc[0]
     idx_corte = MESES_ORDEN.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
@@ -228,13 +217,9 @@ with tab_dash:
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_dias = df_acum['Días Perdidos'].sum()
     sum_hht = df_acum['HHT'].sum()
-    
-    # CORRECCIÓN: Promedio de masa laboral IGNORANDO MESES VACÍOS (0 trabajadores)
-    df_masa_activa = df_acum[df_acum['Masa Laboral'] > 0]
-    if not df_masa_activa.empty:
-        avg_masa = df_masa_activa['Masa Laboral'].mean()
-    else:
-        avg_masa = 0
+    # Promedio masa (ignorando ceros para no bajar promedio artificialmente)
+    df_masa_ok = df_acum[df_acum['Masa Laboral'] > 0]
+    avg_masa = df_masa_ok['Masa Laboral'].mean() if not df_masa_ok.empty else 0
 
     ta_acum = (sum_acc / avg_masa * 100) if avg_masa > 0 else 0
     ts_acum = (sum_dias / avg_masa * 100) if avg_masa > 0 else 0
@@ -250,6 +235,22 @@ with tab_dash:
     insight_text = generar_insight_automatico(row_mes, ta_acum, metas)
     st.info("💡 **ANÁLISIS INTELIGENTE:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
+    
+    # --- AUDITORÍA DE DATOS ---
+    with st.expander("🔍 Auditoría de Datos (Verificar Cálculos)"):
+        st.markdown(f"""
+        **Datos Crudos del Mes ({sel_month} {sel_year}):**
+        * Masa Laboral: `{row_mes['Masa Laboral']}`
+        * Horas Extras: `{row_mes['Horas Extras']}`
+        * Ausentismo: `{row_mes['Horas Ausentismo']}`
+        * **HHT Calculadas:** `({row_mes['Masa Laboral']} * 180) + {row_mes['Horas Extras']} - {row_mes['Horas Ausentismo']} = {row_mes['HHT']}`
+        
+        **Cálculo de Tasa Acc:**
+        * Accidentes: `{row_mes['Accidentes CTP']}`
+        * Tasa: `({row_mes['Accidentes CTP']} / {row_mes['Masa Laboral']}) * 100 = {row_mes['Tasa Acc.']:.2f}%`
+        """)
+        st.dataframe(row_mes.to_frame().T)
+
     st.markdown("---")
 
     k1, k2, k3, k4 = st.columns(4)
@@ -336,52 +337,4 @@ with tab_editor:
     edit_month = c_m.selectbox("Mes:", m_list, key="ed_m")
     
     try:
-        row_idx = df.index[(df['Año'] == edit_year) & (df['Mes'] == edit_month)].tolist()[0]
-        
-        with st.form("edit_form"):
-            st.info(f"Editando: **{edit_month} {edit_year}**")
-            col_e1, col_e2, col_e3 = st.columns(3)
-            with col_e1:
-                st.markdown("##### 👷 Datos")
-                val_masa = st.number_input("Masa Laboral", value=float(df.at[row_idx, 'Masa Laboral']))
-                val_extras = st.number_input("Horas Extras", value=float(df.at[row_idx, 'Horas Extras']))
-                val_aus = st.number_input("Horas Ausentismo", value=float(df.at[row_idx, 'Horas Ausentismo']))
-            with col_e2:
-                st.markdown("##### 🚑 Siniestralidad")
-                val_acc = st.number_input("Accidentes CTP", value=float(df.at[row_idx, 'Accidentes CTP']))
-                val_dias = st.number_input("Días Perdidos", value=float(df.at[row_idx, 'Días Perdidos']))
-                val_cargo = st.number_input("Días Cargo", value=float(df.at[row_idx, 'Días Cargo']))
-            with col_e3:
-                st.markdown("##### 📋 Gestión")
-                val_insp_p = st.number_input("Insp. Prog", value=float(df.at[row_idx, 'Insp. Programadas']))
-                val_insp_e = st.number_input("Insp. Ejec", value=float(df.at[row_idx, 'Insp. Ejecutadas']))
-                val_cap_p = st.number_input("Cap. Prog", value=float(df.at[row_idx, 'Cap. Programadas']))
-                val_cap_e = st.number_input("Cap. Ejec", value=float(df.at[row_idx, 'Cap. Ejecutadas']))
-                val_med_ab = st.number_input("Hallazgos", value=float(df.at[row_idx, 'Medidas Abiertas']))
-                val_med_ce = st.number_input("Cerrados", value=float(df.at[row_idx, 'Medidas Cerradas']))
-                val_exp = st.number_input("Expuestos", value=float(df.at[row_idx, 'Expuestos Silice/Ruido']))
-                val_vig = st.number_input("Vigilancia", value=float(df.at[row_idx, 'Vig. Salud Vigente']))
-
-            st.markdown("##### 📝 Observaciones")
-            c_obs = str(df.at[row_idx, 'Observaciones'])
-            if c_obs.lower() in ["nan", "none", "0", ""]: c_obs = ""
-            val_obs = st.text_area("Texto del Reporte:", value=c_obs, height=100)
-
-            if st.form_submit_button("💾 GUARDAR CAMBIOS"):
-                df.at[row_idx, 'Masa Laboral'] = val_masa
-                df.at[row_idx, 'Horas Extras'] = val_extras
-                df.at[row_idx, 'Horas Ausentismo'] = val_aus
-                df.at[row_idx, 'Accidentes CTP'] = val_acc
-                df.at[row_idx, 'Días Perdidos'] = val_dias
-                df.at[row_idx, 'Días Cargo'] = val_cargo
-                df.at[row_idx, 'Insp. Programadas'] = val_insp_p
-                df.at[row_idx, 'Insp. Ejecutadas'] = val_insp_e
-                df.at[row_idx, 'Cap. Programadas'] = val_cap_p
-                df.at[row_idx, 'Cap. Ejecutadas'] = val_cap_e
-                df.at[row_idx, 'Medidas Abiertas'] = val_med_ab
-                df.at[row_idx, 'Medidas Cerradas'] = val_med_ce
-                df.at[row_idx, 'Expuestos Silice/Ruido'] = val_exp
-                df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
-                df.at[row_idx, 'Observaciones'] = val_obs
-                st.session_state['df_main'] = save_data(df); st.success("Guardado."); st.rerun()
-    except: st.error("Selección inválida.")
+        row_idx
