@@ -11,7 +11,7 @@ from io import BytesIO
 st.set_page_config(page_title="SST - Maderas Galvez", layout="wide", page_icon="🌲")
 
 # --- 2. GESTIÓN DE DATOS ---
-CSV_FILE = "base_datos_galvez_v14.csv"
+CSV_FILE = "base_datos_galvez_v15.csv"
 LOGO_FILE = "logo_empresa_persistente.png"
 MESES_ORDEN = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -38,7 +38,6 @@ def inicializar_db_completa():
     return pd.concat([df_24, df_25, df_26], ignore_index=True)
 
 def procesar_datos(df):
-    # Limpieza de tipos
     cols_num = df.columns.drop(['Año', 'Mes', 'Observaciones'])
     for col in cols_num:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -49,13 +48,29 @@ def procesar_datos(df):
 
     # CÁLCULOS
     df['HHT'] = (df['Masa Laboral'] * 180) + df['Horas Extras'] - df['Horas Ausentismo']
-    df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 1)
-    masa = df['Masa Laboral'].apply(lambda x: x if x > 0 else 1)
+    # Corrección Lógica: Si HHT da negativo o 0, se fuerza a 0.
+    df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 0)
     
-    df['Tasa Acc.'] = (df['Accidentes CTP'] / masa) * 100
-    df['Tasa Sin.'] = (df['Días Perdidos'] / masa) * 100
-    df['Indice Frec.'] = (df['Accidentes CTP'] * 1000000) / df['HHT']
-    df['Indice Grav.'] = ((df['Días Perdidos'] + df['Días Cargo']) * 1000000) / df['HHT']
+    # Lógica de Seguridad: Si Masa es 0, todo es 0 (evita div/0 y datos fantasmas)
+    def calc_row(row):
+        masa = row['Masa Laboral']
+        hht = row['HHT']
+        if masa <= 0 or hht <= 0:
+            return 0, 0, 0, 0
+        
+        ta = (row['Accidentes CTP'] / masa) * 100
+        ts = (row['Días Perdidos'] / masa) * 100
+        if_ = (row['Accidentes CTP'] * 1000000) / hht
+        ig = ((row['Días Perdidos'] + row['Días Cargo']) * 1000000) / hht
+        return ta, ts, if_, ig
+
+    # Aplicar cálculo fila por fila
+    result = df.apply(calc_row, axis=1, result_type='expand')
+    df['Tasa Acc.'] = result[0]
+    df['Tasa Sin.'] = result[1]
+    df['Indice Frec.'] = result[2]
+    df['Indice Grav.'] = result[3]
+    
     return df
 
 def load_data():
@@ -83,16 +98,16 @@ def save_data(df):
 def generar_insight_automatico(row_mes, ta_acum, metas):
     insights = []
     if ta_acum > metas['meta_ta']:
-        insights.append(f"⚠️ <b>ALERTA:</b> Tasa Acumulada ({ta_acum:.2f}%) sobre la meta ({metas['meta_ta']}%)")
+        insights.append(f"⚠️ <b>CRÍTICO:</b> Tasa Acumulada ({ta_acum:.2f}%) excede la meta ({metas['meta_ta']}%)")
     elif ta_acum > (metas['meta_ta'] * 0.8):
-        insights.append(f"🔸 <b>PRECAUCIÓN:</b> Tasa Acumulada al límite.")
+        insights.append(f"🔸 <b>ALERTA:</b> Tasa Acumulada en zona de riesgo.")
     else:
-        insights.append(f"✅ <b>EXCELENTE:</b> Accidentabilidad bajo control.")
+        insights.append(f"✅ <b>CONTROLADO:</b> Tasa Acumulada bajo la meta.")
     
     if row_mes['Tasa Sin.'] > 0:
-        insights.append(f"🚑 <b>SINIESTRALIDAD:</b> {int(row_mes['Días Perdidos'])} días perdidos.")
+        insights.append(f"🚑 <b>DÍAS PERDIDOS:</b> {int(row_mes['Días Perdidos'])} días en este mes.")
     
-    if not insights: return "Desempeño normal."
+    if not insights: return "Sin desviaciones significativas."
     return "<br>".join(insights)
 
 if 'df_main' not in st.session_state:
@@ -106,11 +121,10 @@ with st.sidebar:
     if uploaded_logo:
         with open(LOGO_FILE, "wb") as f: f.write(uploaded_logo.getbuffer())
         st.success("Logo actualizado."); st.rerun()
-    
     if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, use_container_width=True)
 
     st.markdown("---")
-    st.markdown("### 📅 Años Fiscales")
+    st.markdown("### 📅 Gestión de Años")
     years_present = st.session_state['df_main']['Año'].unique()
     c_y1, c_y2 = st.columns(2)
     new_year_input = c_y1.number_input("Año", 2000, 2050, 2024)
@@ -134,7 +148,8 @@ with st.sidebar:
     st.download_button("📊 Descargar Excel", data=excel_data, file_name="Base_SST_Completa.xlsx")
 
     st.markdown("---")
-    meta_ta = st.slider("Meta Tasa Acc. (%)", 0.0, 5.0, 3.0)
+    st.markdown("### 🎯 Metas KPI")
+    meta_ta = st.slider("Límite Tasa Acc. (%)", 0.0, 8.0, 3.0)
     meta_gestion = st.slider("Meta Gestión (%)", 50, 100, 90)
     metas = {'meta_ta': meta_ta, 'meta_gestion': meta_gestion}
 
@@ -158,16 +173,10 @@ class PDF_SST(FPDF):
         self.cell(0, 8, title, 1, 1, 'L', 1); self.ln(4)
 
     def kpi_row(self, label, val_mes, val_acum, unit):
-        def safe_fmt(val):
-            try: return f"{float(val):.2f}"
-            except: return "0.00"
-        def safe_int(val):
-            try: return f"{int(val)}"
-            except: return "0"
-        
+        def safe_fmt(val): return f"{float(val):.2f}"
+        def safe_int(val): return f"{int(val)}"
         v_m = safe_int(val_mes) if "N" in unit or "Dias" in unit else safe_fmt(val_mes)
         v_a = safe_int(val_acum) if "N" in unit or "Dias" in unit else safe_fmt(val_acum)
-
         self.set_font('Arial', '', 10); self.cell(70, 8, label, 1)
         self.set_font('Arial', 'B', 10); self.cell(40, 8, v_m, 1, 0, 'C')
         self.set_text_color(183, 28, 28); self.cell(40, 8, v_a, 1, 0, 'C')
@@ -180,7 +189,7 @@ class PDF_SST(FPDF):
 
 # --- 5. DASHBOARD ---
 df = st.session_state['df_main']
-tab_dash, tab_editor = st.tabs(["📊 DASHBOARD INTELIGENTE", "📝 EDITOR DE DATOS"])
+tab_dash, tab_editor = st.tabs(["📊 DASHBOARD EJECUTIVO", "📝 EDITOR DE DATOS"])
 
 years = sorted(df['Año'].unique(), reverse=True)
 if not years: years = [2026]
@@ -191,7 +200,7 @@ with tab_dash:
         if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, width=160)
     with c2:
         st.title("SOCIEDAD MADERERA GALVEZ Y DI GENOVA LTDA")
-        st.markdown("### SISTEMA DE GESTIÓN EN SST DS44")
+        st.markdown("### 🛡️ CONTROL DE MANDO EJECUTIVO (SGSST)")
 
     col_y, col_m = st.columns(2)
     sel_year = col_y.selectbox("Año Fiscal", years)
@@ -202,9 +211,9 @@ with tab_dash:
     months_avail = df_year['Mes'].tolist()
     
     if not months_avail: st.warning("Sin datos."); st.stop()
-    sel_month = col_m.selectbox("Mes de Cierre", months_avail, index=len(months_avail)-1 if months_avail else 0)
+    sel_month = col_m.selectbox("Mes de Corte", months_avail, index=len(months_avail)-1 if months_avail else 0)
     
-    # DATOS
+    # Datos y Cálculos
     row_mes = df_year[df_year['Mes'] == sel_month].iloc[0]
     idx_corte = MESES_ORDEN.index(sel_month)
     df_acum = df_year[df_year['Mes_Idx'] <= idx_corte]
@@ -212,7 +221,6 @@ with tab_dash:
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_dias = df_acum['Días Perdidos'].sum()
     sum_hht = df_acum['HHT'].sum()
-    
     df_masa_ok = df_acum[df_acum['Masa Laboral'] > 0]
     avg_masa = df_masa_ok['Masa Laboral'].mean() if not df_masa_ok.empty else 0
 
@@ -228,54 +236,84 @@ with tab_dash:
     p_salud = safe_div(row_mes['Vig. Salud Vigente'], row_mes['Expuestos Silice/Ruido']) if row_mes['Expuestos Silice/Ruido']>0 else 100
 
     insight_text = generar_insight_automatico(row_mes, ta_acum, metas)
-    st.info("💡 **ANÁLISIS INTELIGENTE:**")
+    st.info("💡 **ANÁLISIS INTELIGENTE DEL SISTEMA:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     
-    # AUDITORÍA
-    with st.expander("🔍 Auditoría de Datos"):
-        st.markdown(f"**Datos Mes:** Masa: {row_mes['Masa Laboral']} | HHT: {row_mes['HHT']} | Acc: {row_mes['Accidentes CTP']}")
-        st.dataframe(row_mes.to_frame().T)
+    # --- VISUALIZACIÓN NUEVA: VELOCÍMETROS (GAUGES) ---
+    st.markdown("---")
+    st.markdown(f"#### 🚀 DESEMPEÑO ACUMULADO AL CIERRE DE {sel_month.upper()}")
+    
+    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+    
+    def plot_gauge(value, title, max_val, threshold_green, inverse=False):
+        # Inverse: True significa que "Menos es mejor" (Accidentabilidad), False "Mas es mejor" (Gestión)
+        colors = {'good': '#2E7D32', 'bad': '#C62828'}
+        
+        if inverse:
+            bar_color = colors['good'] if value <= threshold_green else colors['bad']
+        else:
+            bar_color = colors['good'] if value >= threshold_green else colors['bad']
+            
+        fig = go.Figure(go.Indicator(
+            mode = "gauge+number",
+            value = value,
+            title = {'text': title, 'font': {'size': 14}},
+            gauge = {
+                'axis': {'range': [0, max_val]},
+                'bar': {'color': bar_color},
+                'steps': [
+                    {'range': [0, max_val], 'color': "#f0f0f0"}],
+            }
+        ))
+        fig.update_layout(height=200, margin=dict(t=30,b=10,l=20,r=20))
+        return fig
+
+    # Velocímetros
+    with col_g1: st.plotly_chart(plot_gauge(ta_acum, "Tasa Acc. Acum", 8, metas['meta_ta'], True), use_container_width=True)
+    with col_g2: st.plotly_chart(plot_gauge(ts_acum, "Tasa Sin. Acum", 50, 10, True), use_container_width=True)
+    with col_g3: st.plotly_chart(plot_gauge(if_acum, "Ind. Frecuencia", 50, 10, True), use_container_width=True)
+    
+    # Proyección Anual Simple
+    meses_transcurridos = idx_corte + 1
+    proyeccion_acc = int((sum_acc / meses_transcurridos) * 12)
+    with col_g4:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.metric("Total Accidentes (Real)", int(sum_acc))
+        st.metric("Proyección Cierre Año", proyeccion_acc, delta=f"{proyeccion_acc - int(sum_acc)} estimados", delta_color="inverse")
 
     st.markdown("---")
+    st.markdown("#### 🔵 INDICADORES DEL MES")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Tasa Accidentabilidad", f"{row_mes['Tasa Acc.']:.2f}%")
     k2.metric("Tasa Siniestralidad", f"{row_mes['Tasa Sin.']:.2f}")
     k3.metric("Indice Frecuencia", f"{row_mes['Indice Frec.']:.2f}")
     k4.metric("Indice Gravedad", f"{row_mes['Indice Grav.']:.0f}")
 
-    st.markdown(f"#### 🔴 ACUMULADO ANUAL ({sel_year})")
-    a1, a2, a3, a4 = st.columns(4)
-    delta_col = "normal" if ta_acum <= metas['meta_ta'] else "inverse"
-    a1.metric("T. Acc. Acumulada", f"{ta_acum:.2f}%", f"Meta: {metas['meta_ta']}%", delta_color=delta_col)
-    a2.metric("T. Sin. Acumulada", f"{ts_acum:.2f}")
-    a3.metric("I. Frec. Acumulado", f"{if_acum:.2f}")
-    a4.metric("I. Grav. Acumulado", f"{ig_acum:.0f}")
-
-    st.markdown("#### 📋 Gestión")
+    st.markdown("#### 📋 Gestión Depto SST")
     g1, g2, g3, g4 = st.columns(4)
-    
     def donut(val, title, col_obj):
         color = "#66BB6A" if val >= metas['meta_gestion'] else "#EF5350"
         fig = go.Figure(go.Pie(values=[val, 100-val], hole=0.7, marker_colors=[color, '#eee'], textinfo='none'))
-        fig.update_layout(height=120, margin=dict(t=0,b=0,l=0,r=0), annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=16, showarrow=False)])
+        fig.update_layout(height=140, margin=dict(t=0,b=0,l=0,r=0), annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=20, showarrow=False)])
         col_obj.markdown(f"<div style='text-align:center; font-size:13px;'>{title}</div>", unsafe_allow_html=True)
         col_obj.plotly_chart(fig, use_container_width=True, key=title)
 
     donut(p_insp, "Inspecciones", g1)
     donut(p_cap, "Capacitaciones", g2)
-    donut(p_medidas, "Hallazgos", g3)
-    donut(p_salud, "Salud", g4)
+    donut(p_medidas, "Cierre Hallazgos", g3)
+    donut(p_salud, "Salud Ocupacional", g4)
 
+    # Botón PDF
     st.markdown("---")
-    if st.button("📄 Generar Reporte PDF"):
+    if st.button("📄 Generar Reporte PDF Oficial"):
         try:
             pdf = PDF_SST(orientation='P', format='A4')
             pdf.add_page(); pdf.set_font('Arial', 'B', 12)
             pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'L'); pdf.ln(2)
             
-            pdf.section_title("1. INDICADORES RESULTADO")
+            pdf.section_title("1. INDICADORES DE RESULTADO")
             pdf.set_fill_color(220); pdf.set_font('Arial', 'B', 9)
-            pdf.cell(70, 8, "INDICADOR", 1, 0, 'C', 1); pdf.cell(40, 8, "MES", 1, 0, 'C', 1)
+            pdf.cell(70, 8, "INDICADOR", 1, 0, 'C', 1); pdf.cell(40, 8, "MES ACTUAL", 1, 0, 'C', 1)
             pdf.cell(40, 8, "ACUMULADO", 1, 0, 'C', 1); pdf.cell(40, 8, "UNIDAD", 1, 1, 'C', 1)
             
             pdf.kpi_row("Tasa Accidentabilidad", row_mes['Tasa Acc.'], ta_acum, "%")
@@ -285,70 +323,52 @@ with tab_dash:
             pdf.ln(5)
             
             pdf.section_title("2. GESTIÓN OPERATIVA")
-            
-            # --- DATOS DETALLADOS PARA PDF (X de Y) ---
             insp_txt = f"{int(row_mes['Insp. Ejecutadas'])} de {int(row_mes['Insp. Programadas'])}"
             cap_txt = f"{int(row_mes['Cap. Ejecutadas'])} de {int(row_mes['Cap. Programadas'])}"
             med_txt = f"{int(row_mes['Medidas Cerradas'])} de {int(row_mes['Medidas Abiertas'])}"
             salud_txt = f"{int(row_mes['Vig. Salud Vigente'])} de {int(row_mes['Expuestos Silice/Ruido'])}"
             
             data_gest = [
-                ("Inspecciones", p_insp, insp_txt), 
-                ("Capacitaciones", p_cap, cap_txt),
-                ("Cierre Hallazgos", p_medidas, med_txt), 
-                ("Salud Ocup.", p_salud, salud_txt)
+                ("Inspecciones", p_insp, insp_txt), ("Capacitaciones", p_cap, cap_txt),
+                ("Cierre Hallazgos", p_medidas, med_txt), ("Salud Ocup.", p_salud, salud_txt)
             ]
-            
-            for label, val, detail_txt in data_gest:
-                pdf.cell(60, 8, label, 0)
-                x=pdf.get_x(); y=pdf.get_y()
+            for label, val, txt in data_gest:
+                pdf.cell(60, 8, label, 0); x=pdf.get_x(); y=pdf.get_y()
                 pdf.set_fill_color(230); pdf.rect(x, y+2, 60, 4, 'F')
                 pdf.set_fill_color(76, 175, 80) if val >= metas['meta_gestion'] else pdf.set_fill_color(244, 67, 54)
-                # Limitamos barra a 100% visualmente
                 w_bar = (val/100)*60 if val <= 100 else 60
                 pdf.rect(x, y+2, w_bar, 4, 'F')
-                
-                pdf.set_x(x+65); 
-                pdf.set_font('Arial', 'B', 10); pdf.set_text_color(0)
+                pdf.set_x(x+65); pdf.set_font('Arial', 'B', 10); pdf.set_text_color(0)
                 pdf.cell(15, 8, f"{val:.0f}%", 0, 0)
-                
-                pdf.set_font('Arial', 'I', 8); pdf.set_text_color(100)
-                pdf.cell(30, 8, f"({detail_txt})", 0, 1)
-                
-                # Reset
+                pdf.set_font('Arial', 'I', 8); pdf.set_text_color(100); pdf.cell(30, 8, f"({txt})", 0, 1)
                 pdf.set_font('Arial', '', 10); pdf.set_text_color(0)
 
             pdf.ln(5); pdf.section_title("3. OBSERVACIONES")
             pdf.set_font('Arial', '', 10); pdf.set_draw_color(100)
-            
             clean_insight = pdf.clean_text(insight_text.replace("<b>","").replace("</b>","").replace("<br>","\n").replace("⚠️","").replace("✅","").replace("🚑",""))
             obs_raw = str(row_mes['Observaciones'])
-            if obs_raw.lower() in ["nan", "none", "0", "0.0", ""]: obs_raw = "Sin observaciones registradas para este periodo."
+            if obs_raw.lower() in ["nan", "none", "0", "0.0", ""]: obs_raw = "Sin observaciones registradas."
             clean_obs = pdf.clean_text(obs_raw)
-            
-            pdf.multi_cell(0, 6, f"ANALISIS SISTEMA:\n{clean_insight}\n\nCOMENTARIOS EXPERTO:\n{clean_obs}", 1, 'L')
+            pdf.multi_cell(0, 6, f"ANALISIS SISTEMA:\n{clean_insight}\n\nCOMENTARIOS:\n{clean_obs}", 1, 'L')
             
             pdf.ln(15); pdf.line(110, pdf.get_y(), 190, pdf.get_y())
             pdf.set_xy(110, pdf.get_y()+2); pdf.set_font('Arial', 'B', 8)
             pdf.cell(80, 5, "Firma Experto", 0, 0, 'C')
             
             out = pdf.output(dest='S').encode('latin-1')
-            st.download_button("📥 Descargar", out, f"Reporte_{sel_month}_{sel_year}.pdf", "application/pdf")
-        except Exception as e:
-            st.error(f"Error al generar PDF: {e}")
+            st.download_button("📥 Descargar Reporte PDF", out, f"Reporte_{sel_month}_{sel_year}.pdf", "application/pdf")
+        except Exception as e: st.error(f"Error PDF: {e}")
 
 with tab_editor:
     st.subheader("📝 Carga de Datos")
     c_y, c_m = st.columns(2)
     edit_year = c_y.selectbox("Año:", years, key="ed_y")
-    
     m_list = df[df['Año'] == edit_year]['Mes'].tolist()
     m_list.sort(key=lambda x: MESES_ORDEN.index(x) if x in MESES_ORDEN else 99)
     edit_month = c_m.selectbox("Mes:", m_list, key="ed_m")
     
     try:
         row_idx = df.index[(df['Año'] == edit_year) & (df['Mes'] == edit_month)].tolist()[0]
-        
         with st.form("edit_form"):
             st.info(f"Editando: **{edit_month} {edit_year}**")
             col_e1, col_e2, col_e3 = st.columns(3)
@@ -394,9 +414,7 @@ with tab_editor:
                 df.at[row_idx, 'Expuestos Silice/Ruido'] = val_exp
                 df.at[row_idx, 'Vig. Salud Vigente'] = val_vig
                 df.at[row_idx, 'Observaciones'] = val_obs
-                
                 st.session_state['df_main'] = save_data(df)
                 st.success("Guardado.")
                 st.rerun()
-    except Exception as e:
-        st.error(f"Seleccione un mes válido: {e}")
+    except: st.error("Seleccione un Año/Mes válido.")
