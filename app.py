@@ -46,17 +46,13 @@ def procesar_datos(df):
     if 'Observaciones' not in df.columns: df['Observaciones'] = ""
     df['Observaciones'] = df['Observaciones'].fillna("").astype(str)
 
-    # CÁLCULO DE HHT (BASE 180)
-    # HHT = (Trabajadores * 180) + Extras - Ausentismo
+    # CÁLCULOS
     df['HHT'] = (df['Masa Laboral'] * 180) + df['Horas Extras'] - df['Horas Ausentismo']
-    
-    # Evitar división por cero o negativos en denominadores
     df['HHT'] = df['HHT'].apply(lambda x: x if x > 0 else 1)
-    masa_segura = df['Masa Laboral'].apply(lambda x: x if x > 0 else 1)
+    masa = df['Masa Laboral'].apply(lambda x: x if x > 0 else 1)
     
-    # KPIs
-    df['Tasa Acc.'] = (df['Accidentes CTP'] / masa_segura) * 100
-    df['Tasa Sin.'] = (df['Días Perdidos'] / masa_segura) * 100
+    df['Tasa Acc.'] = (df['Accidentes CTP'] / masa) * 100
+    df['Tasa Sin.'] = (df['Días Perdidos'] / masa) * 100
     df['Indice Frec.'] = (df['Accidentes CTP'] * 1000000) / df['HHT']
     df['Indice Grav.'] = ((df['Días Perdidos'] + df['Días Cargo']) * 1000000) / df['HHT']
     
@@ -130,7 +126,6 @@ with st.sidebar:
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             cols = ['Año','Mes','Masa Laboral','Accidentes CTP','Días Perdidos','HHT','Tasa Acc.','Tasa Sin.','Indice Frec.','Observaciones']
-            # Agregar el resto de columnas que falten
             all_cols = cols + [c for c in df.columns if c not in cols]
             df[all_cols].to_excel(writer, index=False, sheet_name='SST_Data')
         return output.getvalue()
@@ -217,7 +212,7 @@ with tab_dash:
     sum_acc = df_acum['Accidentes CTP'].sum()
     sum_dias = df_acum['Días Perdidos'].sum()
     sum_hht = df_acum['HHT'].sum()
-    # Promedio masa (ignorando ceros para no bajar promedio artificialmente)
+    # Promedio masa sin ceros
     df_masa_ok = df_acum[df_acum['Masa Laboral'] > 0]
     avg_masa = df_masa_ok['Masa Laboral'].mean() if not df_masa_ok.empty else 0
 
@@ -236,23 +231,14 @@ with tab_dash:
     st.info("💡 **ANÁLISIS INTELIGENTE:**")
     st.markdown(f"<div style='background-color:#e3f2fd; padding:10px; border-radius:5px;'>{insight_text}</div>", unsafe_allow_html=True)
     
-    # --- AUDITORÍA DE DATOS ---
+    # AUDITORÍA
     with st.expander("🔍 Auditoría de Datos (Verificar Cálculos)"):
         st.markdown(f"""
-        **Datos Crudos del Mes ({sel_month} {sel_year}):**
-        * Masa Laboral: `{row_mes['Masa Laboral']}`
-        * Horas Extras: `{row_mes['Horas Extras']}`
-        * Ausentismo: `{row_mes['Horas Ausentismo']}`
-        * **HHT Calculadas:** `({row_mes['Masa Laboral']} * 180) + {row_mes['Horas Extras']} - {row_mes['Horas Ausentismo']} = {row_mes['HHT']}`
-        
-        **Cálculo de Tasa Acc:**
-        * Accidentes: `{row_mes['Accidentes CTP']}`
-        * Tasa: `({row_mes['Accidentes CTP']} / {row_mes['Masa Laboral']}) * 100 = {row_mes['Tasa Acc.']:.2f}%`
+        **Datos Mes:** Masa: {row_mes['Masa Laboral']} | HHT: {row_mes['HHT']} | Acc: {row_mes['Accidentes CTP']}
         """)
         st.dataframe(row_mes.to_frame().T)
 
     st.markdown("---")
-
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Tasa Accidentabilidad", f"{row_mes['Tasa Acc.']:.2f}%")
     k2.metric("Tasa Siniestralidad", f"{row_mes['Tasa Sin.']:.2f}")
@@ -268,73 +254,4 @@ with tab_dash:
     a4.metric("I. Grav. Acumulado", f"{ig_acum:.0f}")
 
     st.markdown("#### 📋 Gestión")
-    g1, g2, g3, g4 = st.columns(4)
-    def donut(val, title):
-        color = "#66BB6A" if val >= metas['meta_gestion'] else "#EF5350"
-        fig = go.Figure(go.Pie(values=[val, 100-val], hole=0.7, marker_colors=[color, '#eee'], textinfo='none'))
-        fig.update_layout(height=120, margin=dict(t=0,b=0,l=0,r=0), annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=16, showarrow=False)])
-        st.markdown(f"<div style='text-align:center; font-size:13px;'>{title}</div>", unsafe_allow_html=True)
-        st.plotly_chart(fig, use_container_width=True, key=title)
-
-    with g1: donut(p_insp, "Inspecciones")
-    with g2: donut(p_cap, "Capacitaciones")
-    with g3: donut(p_medidas, "Hallazgos")
-    with g4: donut(p_salud, "Salud")
-
-    st.markdown("---")
-    if st.button("📄 Generar Reporte PDF"):
-        try:
-            pdf = PDF_SST(orientation='P', format='A4')
-            pdf.add_page(); pdf.set_font('Arial', 'B', 12)
-            pdf.cell(0, 10, f"PERIODO: {sel_month.upper()} {sel_year}", 0, 1, 'L'); pdf.ln(2)
-            
-            pdf.section_title("1. INDICADORES RESULTADO")
-            pdf.set_fill_color(220); pdf.set_font('Arial', 'B', 9)
-            pdf.cell(70, 8, "INDICADOR", 1, 0, 'C', 1); pdf.cell(40, 8, "MES", 1, 0, 'C', 1)
-            pdf.cell(40, 8, "ACUMULADO", 1, 0, 'C', 1); pdf.cell(40, 8, "UNIDAD", 1, 1, 'C', 1)
-            
-            pdf.kpi_row("Tasa Accidentabilidad", row_mes['Tasa Acc.'], ta_acum, "%")
-            pdf.kpi_row("Tasa Siniestralidad", row_mes['Tasa Sin.'], ts_acum, "Dias/Trab")
-            pdf.kpi_row("Indice Frecuencia", row_mes['Indice Frec.'], if_acum, "Acc/1M HHT")
-            pdf.kpi_row("Total Accidentes CTP", row_mes['Accidentes CTP'], sum_acc, "N Eventos")
-            pdf.ln(5)
-            
-            pdf.section_title("2. GESTIÓN OPERATIVA")
-            data_gest = [("Inspecciones", p_insp), ("Capacitaciones", p_cap), ("Cierre Hallazgos", p_medidas), ("Salud Ocup.", p_salud)]
-            for l, v in data_gest:
-                pdf.cell(80, 8, l, 0); x=pdf.get_x(); y=pdf.get_y()
-                pdf.set_fill_color(230); pdf.rect(x, y+2, 80, 4, 'F')
-                pdf.set_fill_color(76, 175, 80) if v >= metas['meta_gestion'] else pdf.set_fill_color(244, 67, 54)
-                pdf.rect(x, y+2, (v/100)*80, 4, 'F')
-                pdf.set_x(x+85); pdf.cell(20, 8, f"{v:.0f}%", 0, 1)
-
-            pdf.ln(5); pdf.section_title("3. OBSERVACIONES")
-            pdf.set_font('Arial', '', 10); pdf.set_draw_color(100)
-            
-            clean_insight = pdf.clean_text(insight_text.replace("<b>","").replace("</b>","").replace("<br>","\n").replace("⚠️","").replace("✅","").replace("🚑",""))
-            obs_raw = str(row_mes['Observaciones'])
-            if obs_raw.lower() in ["nan", "none", "0", "0.0", ""]: obs_raw = "Sin observaciones registradas para este periodo."
-            clean_obs = pdf.clean_text(obs_raw)
-            
-            pdf.multi_cell(0, 6, f"ANALISIS SISTEMA:\n{clean_insight}\n\nCOMENTARIOS EXPERTO:\n{clean_obs}", 1, 'L')
-            
-            pdf.ln(15); pdf.line(110, pdf.get_y(), 190, pdf.get_y())
-            pdf.set_xy(110, pdf.get_y()+2); pdf.set_font('Arial', 'B', 8)
-            pdf.cell(80, 5, "Firma Experto", 0, 0, 'C')
-            
-            out = pdf.output(dest='S').encode('latin-1')
-            st.download_button("📥 Descargar", out, f"Reporte_{sel_month}_{sel_year}.pdf", "application/pdf")
-        except Exception as e:
-            st.error(f"Error al generar PDF: {e}")
-
-with tab_editor:
-    st.subheader("📝 Carga de Datos")
-    c_y, c_m = st.columns(2)
-    edit_year = c_y.selectbox("Año:", years, key="ed_y")
-    
-    m_list = df[df['Año'] == edit_year]['Mes'].tolist()
-    m_list.sort(key=lambda x: MESES_ORDEN.index(x) if x in MESES_ORDEN else 99)
-    edit_month = c_m.selectbox("Mes:", m_list, key="ed_m")
-    
-    try:
-        row_idx
+    g1, g2, g3,
